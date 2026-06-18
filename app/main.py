@@ -15,6 +15,7 @@ load_dotenv()
 
 from .features.calendar import add_event as cal_add_event
 from .features.calendar import get_events as cal_get_events
+from .features.calendar import get_week_events as cal_get_week_events
 from .features.calendar import parse_calendar_intent
 from .features.expense import ExpenseTracker, parse_expense_intent
 from .features.image_handler import analyze_image
@@ -380,9 +381,11 @@ async def webhook(request: Request) -> Response:
 
         # Apple Calendar
         if reply_text is None:
-            cal_intent, days_ahead, cal_raw = parse_calendar_intent(text)
+            cal_intent, extra, cal_raw = parse_calendar_intent(text)
             if cal_intent == "show":
-                reply_text = await cal_get_events(days_ahead)
+                reply_text = await cal_get_events(extra)
+            elif cal_intent == "week":
+                reply_text = await cal_get_week_events(extra)
             elif cal_intent == "add":
                 reply_text = await _handle_cal_add(cal_raw)
 
