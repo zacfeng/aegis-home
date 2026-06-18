@@ -1,23 +1,33 @@
+import json
 from collections import deque
-from typing import List, Dict, Protocol, runtime_checkable
+from typing import Any, Dict, List
 
+# ---------------------------------------------------------------------------
+# Store protocol
+# ---------------------------------------------------------------------------
 
-@runtime_checkable
-class MessageStore(Protocol):
+class MessageStore:
     """
-    Interface contract for backing stores.
-    Swap out the deque-based default for Redis (or any other store)
-    by implementing this protocol — no changes to MemoryManager needed.
+    Interface for backing stores.
+    Implement get / append / clear to swap DequeStore for RedisStore
+    without touching MemoryManager.
     """
 
-    def get(self, chat_id: str) -> List[Dict[str, str]]: ...
-    def append(self, chat_id: str, message: Dict[str, str]) -> None: ...
-    def clear(self, chat_id: str) -> None: ...
+    async def get(self, chat_id: str) -> List[Dict[str, str]]:
+        raise NotImplementedError
+
+    async def append(self, chat_id: str, message: Dict[str, str]) -> None:
+        raise NotImplementedError
+
+    async def clear(self, chat_id: str) -> None:
+        raise NotImplementedError
 
 
-class DequeStore:
-    """In-process deque store. Replace with RedisStore for persistence."""
+# ---------------------------------------------------------------------------
+# In-process deque store (default, no persistence)
+# ---------------------------------------------------------------------------
 
+class DequeStore(MessageStore):
     def __init__(self, maxlen: int = 20):
         self._maxlen = maxlen
         self._data: Dict[str, deque] = {}
@@ -27,37 +37,68 @@ class DequeStore:
             self._data[chat_id] = deque(maxlen=self._maxlen)
         return self._data[chat_id]
 
-    def get(self, chat_id: str) -> List[Dict[str, str]]:
+    async def get(self, chat_id: str) -> List[Dict[str, str]]:
         return list(self._bucket(chat_id))
 
-    def append(self, chat_id: str, message: Dict[str, str]) -> None:
+    async def append(self, chat_id: str, message: Dict[str, str]) -> None:
         self._bucket(chat_id).append(message)
 
-    def clear(self, chat_id: str) -> None:
+    async def clear(self, chat_id: str) -> None:
         self._data.pop(chat_id, None)
 
 
+# ---------------------------------------------------------------------------
+# Redis store (persistent)
+# ---------------------------------------------------------------------------
+
+class RedisStore(MessageStore):
+    """
+    Persists conversation history in Redis lists.
+    Keys: aegis:memory:{chat_id}  — TTL 30 days
+    """
+
+    _TTL = 30 * 24 * 3600  # 30 days in seconds
+
+    def __init__(self, redis_url: str, maxlen: int = 20):
+        import redis.asyncio as aioredis
+        self._redis: Any = aioredis.from_url(redis_url, decode_responses=True)
+        self._maxlen = maxlen
+
+    def _key(self, chat_id: str) -> str:
+        return f"aegis:memory:{chat_id}"
+
+    async def get(self, chat_id: str) -> List[Dict[str, str]]:
+        items = await self._redis.lrange(self._key(chat_id), 0, -1)
+        return [json.loads(item) for item in items]
+
+    async def append(self, chat_id: str, message: Dict[str, str]) -> None:
+        key = self._key(chat_id)
+        await self._redis.rpush(key, json.dumps(message, ensure_ascii=False))
+        await self._redis.ltrim(key, -self._maxlen, -1)
+        await self._redis.expire(key, self._TTL)
+
+    async def clear(self, chat_id: str) -> None:
+        await self._redis.delete(self._key(chat_id))
+
+
+# ---------------------------------------------------------------------------
+# MemoryManager
+# ---------------------------------------------------------------------------
+
 class MemoryManager:
     """
-    Decoupled memory layer keyed by chat_id (LINE group/user ID).
-
-    The backing store is injected so it can be swapped without touching
-    this class — pass a RedisStore instance in production.
+    Decoupled async memory layer keyed by chat_id.
+    Pass a RedisStore for persistence, or leave blank for in-process deque.
     """
 
     def __init__(self, store: MessageStore | None = None, maxlen: int = 20):
         self._store: MessageStore = store or DequeStore(maxlen=maxlen)
 
-    def get_history(self, chat_id: str) -> List[Dict[str, str]]:
-        """Return the conversation history for a given chat."""
-        return self._store.get(chat_id)
+    async def get_history(self, chat_id: str) -> List[Dict[str, str]]:
+        return await self._store.get(chat_id)
 
-    def save_message(
-        self, chat_id: str, role: str, content: str
-    ) -> None:
-        """Persist a single turn (role: 'user' | 'assistant')."""
-        self._store.append(chat_id, {"role": role, "content": content})
+    async def save_message(self, chat_id: str, role: str, content: str) -> None:
+        await self._store.append(chat_id, {"role": role, "content": content})
 
-    def clear_history(self, chat_id: str) -> None:
-        """Wipe the history for a given chat (useful for /reset commands)."""
-        self._store.clear(chat_id)
+    async def clear_history(self, chat_id: str) -> None:
+        await self._store.clear(chat_id)

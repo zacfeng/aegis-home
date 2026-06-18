@@ -4,6 +4,7 @@ import os
 import sys
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Any
 
 import pytz
 from dotenv import load_dotenv
@@ -12,9 +13,20 @@ from fastapi.responses import JSONResponse
 
 load_dotenv()
 
-from .line_handler import extract_chat_id, push_message, reply_message, verify_signature
+from .features.expense import ExpenseTracker, parse_expense_intent
+from .features.image_handler import analyze_image
+from .features.morning_summary import build_morning_message, get_active_chats, register_chat
+from .features.shopping import ShoppingList, parse_shopping_intent
+from .features.voice_handler import handle_voice
+from .line_handler import (
+    extract_chat_id,
+    get_user_display_name,
+    push_message,
+    reply_message,
+    verify_signature,
+)
 from .llm_factory import LLMFactory
-from .memory_manager import MemoryManager
+from .memory_manager import MemoryManager, RedisStore
 from .reminder_parser import parse_reminder
 from .scheduler import scheduler
 
@@ -30,7 +42,7 @@ TAIWAN_TZ = pytz.timezone("Asia/Taipei")
 # Startup validation
 # ---------------------------------------------------------------------------
 _REQUIRED_ENV = ["LINE_CHANNEL_ACCESS_TOKEN", "LINE_CHANNEL_SECRET"]
-_OPTIONAL_MODEL_KEYS = {
+_MODEL_KEY_MAP = {
     "gemini": "GEMINI_API_KEY",
     "claude": "ANTHROPIC_API_KEY",
     "hermes": "HERMES_API_KEY",
@@ -44,11 +56,9 @@ def _check_env() -> None:
         sys.exit(1)
 
     default_model = os.getenv("DEFAULT_MODEL", "gemini").lower()
-    key_name = _OPTIONAL_MODEL_KEYS.get(default_model)
+    key_name = _MODEL_KEY_MAP.get(default_model)
     if key_name and not os.getenv(key_name):
-        logger.critical(
-            "DEFAULT_MODEL is '%s' but %s is not set", default_model, key_name
-        )
+        logger.critical("DEFAULT_MODEL is '%s' but %s is not set", default_model, key_name)
         sys.exit(1)
 
 
@@ -73,26 +83,60 @@ DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gemini").lower()
 BOT_TRIGGER = os.getenv("BOT_TRIGGER", "Aegis").strip()
 
 factory = LLMFactory(default_model=DEFAULT_MODEL)  # type: ignore[arg-type]
-memory = MemoryManager(maxlen=20)
+
+# Redis setup (optional — falls back to in-memory deque when REDIS_URL absent)
+_redis_client: Any = None
+_REDIS_URL = os.getenv("REDIS_URL", "")
+
+if _REDIS_URL:
+    import redis.asyncio as _aioredis
+    _redis_client = _aioredis.from_url(_REDIS_URL, decode_responses=True)
+    logger.info("Redis connected: %s", _REDIS_URL.split("@")[-1])
+    memory = MemoryManager(store=RedisStore(_REDIS_URL, maxlen=30), maxlen=30)
+else:
+    logger.warning("REDIS_URL not set — using in-memory store (non-persistent)")
+    memory = MemoryManager(maxlen=30)
+
+shopping: ShoppingList | None = ShoppingList(_redis_client) if _redis_client else None
+expense: ExpenseTracker | None = ExpenseTracker(_redis_client) if _redis_client else None
+
+_NO_REDIS_MSG = "需要先設定 Redis 才能使用這個功能喔！請聯絡管理員設定 REDIS_URL～"
 
 
 # ---------------------------------------------------------------------------
-# App lifespan (start / stop scheduler)
+# App lifespan
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     scheduler.start()
     logger.info("Scheduler started")
+
+    # Register morning summary cron job (8:00 AM Taiwan time, every day)
+    if _redis_client:
+        scheduler.add_job(
+            _send_morning_summary,
+            trigger="cron",
+            hour=8,
+            minute=0,
+            timezone=TAIWAN_TZ,
+            id="morning_summary",
+            replace_existing=True,
+        )
+        logger.info("Morning summary cron registered")
+
     yield
+
     scheduler.shutdown(wait=False)
     logger.info("Scheduler stopped")
+    if _redis_client:
+        await _redis_client.aclose()
 
 
-app = FastAPI(title="AegisHome", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="AegisHome", version="0.2.0", lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Internal helpers
 # ---------------------------------------------------------------------------
 def _is_group_source(event: dict) -> bool:
     return event.get("source", {}).get("type", "") in ("group", "room")
@@ -114,7 +158,6 @@ def _should_respond(text: str, event: dict) -> tuple[bool, str]:
 
 
 async def _schedule_reminder(chat_id: str, reminder: dict) -> None:
-    """Parse reminder dict and register an APScheduler job."""
     try:
         run_dt = datetime.fromisoformat(reminder["datetime"])
         if run_dt.tzinfo is None:
@@ -141,6 +184,29 @@ async def _schedule_reminder(chat_id: str, reminder: dict) -> None:
         logger.exception("Failed to schedule reminder")
 
 
+async def _try_schedule(text: str, chat_id: str) -> None:
+    try:
+        client = factory.get_client()
+        reminder = await parse_reminder(text, client)
+        if reminder:
+            await _schedule_reminder(chat_id, reminder)
+    except Exception:
+        logger.exception("_try_schedule error")
+
+
+async def _send_morning_summary() -> None:
+    if not _redis_client:
+        return
+    try:
+        msg = await build_morning_message()
+        chats = await get_active_chats(_redis_client)
+        for chat_id in chats:
+            await push_message(chat_id, msg)
+        logger.info("Morning summary sent to %d chat(s)", len(chats))
+    except Exception:
+        logger.exception("Morning summary failed")
+
+
 # ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------
@@ -154,6 +220,7 @@ async def health() -> JSONResponse:
         "status": "ok",
         "active_model": factory.active_model,
         "trigger": BOT_TRIGGER or "(all messages)",
+        "redis": bool(_redis_client),
         "pending_reminders": len(jobs),
         "reminders": jobs,
     })
@@ -178,50 +245,125 @@ async def webhook(request: Request) -> Response:
     for event in payload.get("events", []):
         if event.get("type") != "message":
             continue
+
         msg = event.get("message", {})
-        if msg.get("type") != "text":
+        msg_type = msg.get("type", "")
+        reply_token: str = event["replyToken"]
+        chat_id = extract_chat_id(event)
+        source = event.get("source", {})
+        user_id = source.get("userId", "")
+        group_id = source.get("groupId")
+
+        # Register chat for morning summaries
+        if _redis_client:
+            asyncio.ensure_future(register_chat(_redis_client, chat_id))
+
+        # ── Image message ──────────────────────────────────────────────────
+        if msg_type == "image":
+            reply_text = await analyze_image(msg["id"])
+            await reply_message(reply_token, reply_text)
+            continue
+
+        # ── Audio / voice message ──────────────────────────────────────────
+        if msg_type == "audio":
+            reply_text = await handle_voice(msg["id"])
+            await reply_message(reply_token, reply_text)
+            continue
+
+        # ── Text message ───────────────────────────────────────────────────
+        if msg_type != "text":
             continue
 
         raw_text: str = msg["text"].strip()
-        reply_token: str = event["replyToken"]
-        chat_id = extract_chat_id(event)
-
         should_respond, text = _should_respond(raw_text, event)
         if not should_respond:
             continue
 
+        # Hard commands
         if text.lower() == "/reset":
-            memory.clear_history(chat_id)
-            await reply_message(reply_token, "對話記憶已清除。")
+            await memory.clear_history(chat_id)
+            await reply_message(reply_token, "對話記憶清除囉！小恆恆忘記之前說的了 (ﾉ>ω<)ﾉ")
             continue
 
-        history = memory.get_history(chat_id)
-        try:
-            client = factory.get_client()
-            reply_text = await client.generate_response(
-                text, history, system_prompt=SYSTEM_PROMPT
+        if text.lower() in ("/model", "切換模型"):
+            models = list(factory._registry.keys())
+            await reply_message(
+                reply_token,
+                f"目前模型：{factory.active_model}\n可用：{', '.join(models)}\n輸入「切換 gemini」等指令切換",
             )
-        except Exception as exc:
-            logger.exception("LLM error for chat %s", chat_id)
-            reply_text = f"抱歉，發生了一點問題：{exc}"
+            continue
 
-        memory.save_message(chat_id, "user", text)
-        memory.save_message(chat_id, "assistant", reply_text)
+        if text.lower().startswith("切換 "):
+            new_model = text[3:].strip().lower()
+            try:
+                factory.switch_model(new_model)  # type: ignore[arg-type]
+                await reply_message(reply_token, f"好的！小恆恆換成 {new_model} 了～")
+            except ValueError as e:
+                await reply_message(reply_token, str(e))
+            continue
+
+        # ── Structured feature intents (no LLM needed) ────────────────────
+        reply_text: str | None = None
+
+        # Shopping list
+        shop_intent, shop_payload = parse_shopping_intent(text)
+        if shop_intent != "none":
+            if not shopping:
+                reply_text = _NO_REDIS_MSG
+            elif shop_intent == "show":
+                reply_text = await shopping.show_list(chat_id)
+            elif shop_intent == "add":
+                reply_text = await shopping.add_item(chat_id, shop_payload)
+            elif shop_intent == "remove":
+                reply_text = await shopping.remove_item(chat_id, shop_payload)
+            elif shop_intent == "clear":
+                reply_text = await shopping.clear_list(chat_id)
+
+        # Expense tracking
+        if reply_text is None:
+            exp_intent, amount, description = parse_expense_intent(text)
+            if exp_intent != "none":
+                if not expense:
+                    reply_text = _NO_REDIS_MSG
+                elif exp_intent == "summary":
+                    reply_text = await expense.monthly_summary(chat_id)
+                elif exp_intent == "add":
+                    who = "家人"
+                    if user_id:
+                        try:
+                            who = await get_user_display_name(user_id, group_id)
+                        except Exception:
+                            pass
+                    reply_text = await expense.add_expense(chat_id, amount, description, who)
+
+        # ── LLM fallback ──────────────────────────────────────────────────
+        if reply_text is None:
+            history = await memory.get_history(chat_id)
+
+            # Prepend speaker name for group chats so the LLM knows who said what
+            contexted_text = text
+            if _is_group_source(event) and user_id:
+                try:
+                    display_name = await get_user_display_name(user_id, group_id)
+                    contexted_text = f"[{display_name}說] {text}"
+                except Exception:
+                    pass
+
+            try:
+                client = factory.get_client()
+                reply_text = await client.generate_response(
+                    contexted_text, history, system_prompt=SYSTEM_PROMPT
+                )
+            except Exception as exc:
+                logger.exception("LLM error for chat %s", chat_id)
+                reply_text = f"抱歉，發生了一點問題：{exc}"
+
+            await memory.save_message(chat_id, "user", text)
+            await memory.save_message(chat_id, "assistant", reply_text)
+
+            # Background: check for reminder intent
+            asyncio.ensure_future(_try_schedule(text, chat_id))
+
         await reply_message(reply_token, reply_text)
 
-        # Check if a reminder was embedded in the user's message
-        asyncio.ensure_future(
-            _try_schedule(text, chat_id)
-        )
-
     return Response(status_code=200)
-
-
-async def _try_schedule(text: str, chat_id: str) -> None:
-    try:
-        client = factory.get_client()
-        reminder = await parse_reminder(text, client)
-        if reminder:
-            await _schedule_reminder(chat_id, reminder)
-    except Exception:
-        logger.exception("_try_schedule error")

@@ -76,6 +76,21 @@ async def push_message(to: str, text: str) -> None:
             )
 
 
+async def get_user_display_name(user_id: str, group_id: str | None = None) -> str:
+    """Fetch display name from LINE Profile API."""
+    token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+    headers = {"Authorization": f"Bearer {token}"}
+    if group_id:
+        url = f"{LINE_API_BASE}/group/{group_id}/member/{user_id}"
+    else:
+        url = f"{LINE_API_BASE}/profile/{user_id}"
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(url, headers=headers, timeout=5)
+        if resp.status_code == 200:
+            return resp.json().get("displayName", "家人")
+    return "家人"
+
+
 def extract_chat_id(event: dict[str, Any]) -> str:
     """
     Derive a stable chat identifier:
