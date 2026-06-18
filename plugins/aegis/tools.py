@@ -39,6 +39,7 @@ def _redis():
 def _cal_connect():
     username = os.getenv("APPLE_ID", "")
     password = os.getenv("APPLE_APP_PASSWORD", "")
+    print(f"[DEBUG] _cal_connect called. APPLE_ID: {'set (' + username[:3] + '...)' if username else 'NOT SET'}, APPLE_APP_PASSWORD: {'set' if password else 'NOT SET'}", flush=True)
     if not username or not password:
         raise RuntimeError("需要設定 APPLE_ID 和 APPLE_APP_PASSWORD")
     import caldav  # type: ignore
@@ -126,6 +127,8 @@ def get_calendar_events(args: dict, **kw) -> str:
     except ImportError:
         return _err("需要安裝 caldav 套件")
     except Exception as exc:
+        import traceback
+        traceback.print_exc()
         return _err(str(exc))
 
 
@@ -167,6 +170,8 @@ def add_calendar_event(args: dict, **kw) -> str:
     except KeyError as exc:
         return _err(f"缺少必要參數：{exc}")
     except Exception as exc:
+        import traceback
+        traceback.print_exc()
         return _err(str(exc))
 
 
