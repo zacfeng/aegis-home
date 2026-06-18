@@ -2,8 +2,11 @@ import logging
 import os
 import sys
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
+
+load_dotenv()
 
 from .line_handler import extract_chat_id, reply_message, verify_signature
 from .llm_factory import LLMFactory
