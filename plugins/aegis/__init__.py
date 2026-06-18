@@ -15,6 +15,8 @@ _TOOLS = [
     ("get_inventory",        schemas.GET_INVENTORY,        tools.get_inventory),
     ("update_inventory",     schemas.UPDATE_INVENTORY,     tools.update_inventory),
     ("get_consumption_queue", schemas.GET_CONSUMPTION_QUEUE, tools.get_consumption_queue),
+    ("add_activity_log",     schemas.ADD_ACTIVITY_LOG,     tools.add_activity_log),
+    ("get_activity_logs",    schemas.GET_ACTIVITY_LOGS,    tools.get_activity_logs),
 ]
 
 

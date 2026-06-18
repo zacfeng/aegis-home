@@ -478,4 +478,60 @@ def get_consumption_queue(args: dict, **kw) -> str:
         return _err(str(exc))
 
 
+# ---------------------------------------------------------------------------
+# Activity Memos
+# ---------------------------------------------------------------------------
+def add_activity_log(args: dict, **kw) -> str:
+    r = _redis()
+    if not r:
+        return _err("需要設定 REDIS_URL")
+    try:
+        content = args["content"]
+        date_str = args.get("date")
+        if not date_str:
+            date_str = datetime.now(TAIWAN_TZ).strftime("%Y-%m-%d")
+        
+        now_str = datetime.now(TAIWAN_TZ).isoformat()
+        val_data = {
+            "id": str(uuid.uuid4()),
+            "content": content,
+            "date": date_str,
+            "created_at": now_str
+        }
+        r.rpush(_MEMOS_KEY, json.dumps(val_data, ensure_ascii=False))
+        return _ok({"added": val_data})
+    except Exception as exc:
+        return _err(str(exc))
+
+
+def get_activity_logs(args: dict, **kw) -> str:
+    r = _redis()
+    if not r:
+        return _err("需要設定 REDIS_URL")
+    try:
+        keyword = args.get("keyword")
+        limit = int(args.get("limit", 50))
+        
+        raw_items = list(r.lrange(_MEMOS_KEY, 0, -1))
+        logs = []
+        for raw in raw_items:
+            try:
+                data = json.loads(raw)
+                if isinstance(data, dict) and "content" in data:
+                    logs.append(data)
+            except Exception:
+                pass
+        
+        if keyword:
+            keyword_lower = keyword.lower()
+            logs = [log for log in logs if keyword_lower in log["content"].lower() or keyword_lower in log.get("date", "").lower()]
+            
+        logs.sort(key=lambda x: (x.get("date", ""), x.get("created_at", "")), reverse=True)
+        logs = logs[:limit]
+        return _ok({"logs": logs})
+    except Exception as exc:
+        return _err(str(exc))
+
+
+
 

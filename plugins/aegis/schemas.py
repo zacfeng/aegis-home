@@ -171,4 +171,30 @@ GET_CONSUMPTION_QUEUE = {
     "parameters": {"type": "object", "properties": {}},
 }
 
+ADD_ACTIVITY_LOG = {
+    "name": "add_activity_log",
+    "description": "記錄一筆家庭活動或備忘錄，以便未來回顧。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "content": {"type": "string", "description": "活動或事件內容（例如：「全家今天去奧利家烤肉」、「大掃除完成」）"},
+            "date": {"type": "string", "description": "活動發生的日期，格式為 YYYY-MM-DD（例如：2026-06-20，選填，預設為今天）"}
+        },
+        "required": ["content"]
+    }
+}
+
+GET_ACTIVITY_LOGS = {
+    "name": "get_activity_logs",
+    "description": "查詢並回顧過去的家庭活動記錄與備忘錄。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "keyword": {"type": "string", "description": "關鍵字過濾，僅回傳包含此關鍵字的活動記錄（選填）"},
+            "limit": {"type": "integer", "description": "回傳紀錄的最大筆數，預設為 50（選填）"}
+        }
+    }
+}
+
+
 

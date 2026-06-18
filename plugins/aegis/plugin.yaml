@@ -17,3 +17,6 @@ provides_tools:
   - get_inventory
   - update_inventory
   - get_consumption_queue
+  - add_activity_log
+  - get_activity_logs
+
