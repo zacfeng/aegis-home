@@ -23,6 +23,7 @@ from .features.shopping import ShoppingList, parse_shopping_intent
 from .features.voice_handler import handle_voice
 from .line_handler import (
     extract_chat_id,
+    get_bot_user_id,
     get_user_display_name,
     push_message,
     reply_message,
@@ -105,12 +106,19 @@ expense: ExpenseTracker | None = ExpenseTracker(_redis_client) if _redis_client 
 
 _NO_REDIS_MSG = "需要先設定 Redis 才能使用這個功能喔！請聯絡管理員設定 REDIS_URL～"
 
+# Cached at startup — used to detect @mention in group messages
+_bot_user_id: str = ""
+
 
 # ---------------------------------------------------------------------------
 # App lifespan
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    global _bot_user_id
+    _bot_user_id = await get_bot_user_id()
+    logger.info("Bot user ID: %s", _bot_user_id or "(unknown)")
+
     scheduler.start()
     logger.info("Scheduler started")
 
@@ -145,9 +153,24 @@ def _is_group_source(event: dict) -> bool:
     return event.get("source", {}).get("type", "") in ("group", "room")
 
 
-def _should_respond(text: str, event: dict) -> tuple[bool, str]:
+def _should_respond(text: str, event: dict, msg: dict) -> tuple[bool, str]:
     if not _is_group_source(event):
         return True, text
+
+    # Check LINE's native @mention — bot appears in mentionees list
+    if _bot_user_id:
+        mentionees = msg.get("mention", {}).get("mentionees", [])
+        if any(m.get("userId") == _bot_user_id for m in mentionees):
+            # Strip the @mention text from the message so the LLM only sees the real content
+            mention_text = next(
+                (m for m in mentionees if m.get("userId") == _bot_user_id), {}
+            )
+            idx = mention_text.get("index", 0)
+            length = mention_text.get("length", 0)
+            cleaned = (text[:idx] + text[idx + length:]).strip()
+            return True, cleaned or text
+
+    # Fallback: plain text prefix match (DMs or trigger-word style)
     if not BOT_TRIGGER:
         return True, text
 
@@ -294,7 +317,7 @@ async def webhook(request: Request) -> Response:
             continue
 
         raw_text: str = msg["text"].strip()
-        should_respond, text = _should_respond(raw_text, event)
+        should_respond, text = _should_respond(raw_text, event, msg)
         if not should_respond:
             continue
 

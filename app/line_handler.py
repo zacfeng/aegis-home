@@ -91,6 +91,20 @@ async def get_user_display_name(user_id: str, group_id: str | None = None) -> st
     return "家人"
 
 
+async def get_bot_user_id() -> str:
+    """Fetch this bot's own LINE user ID from the bot info endpoint."""
+    token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{LINE_API_BASE}/info",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            return resp.json().get("userId", "")
+    return ""
+
+
 def extract_chat_id(event: dict[str, Any]) -> str:
     """
     Derive a stable chat identifier:
