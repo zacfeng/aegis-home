@@ -21,6 +21,9 @@ export PORT=8646
 export LINE_PORT=8646
 hermes gateway &
 
+# 等待 Gateway 完全啟動
+sleep 3
+
 # 啟動前景的自訂捷徑 API 代理伺服器，監聽 Railway 給的真實 PORT
 export PORT="$REAL_PORT"
 exec python /opt/hermes-data/api.py
