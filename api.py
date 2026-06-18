@@ -22,7 +22,7 @@ class ShortcutPayload(BaseModel):
         return self.message or self.Body or ""
 
 # 這裡的密鑰可以自己改，iOS 捷徑裡面也要設成一樣的
-HERMES_API_KEY = os.environ.get("SHORTCUT_API_KEY", "my_secret_key")
+HERMES_API_KEY = os.environ.get("SHORTCUT_API_KEY")  # 沒設定就不驗證
 # 內部 Hermes Gateway 跑在 8646
 GATEWAY_URL = "http://127.0.0.1:8646"
 
@@ -31,7 +31,8 @@ import subprocess
 
 @app.post("/v1/shortcut")
 async def handle_shortcut(payload: ShortcutPayload, x_api_key: str = Header(None)):
-    if x_api_key != HERMES_API_KEY:
+    # 只在有設定 SHORTCUT_API_KEY 環境變數時才驗證
+    if HERMES_API_KEY and x_api_key != HERMES_API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
     
     try:
