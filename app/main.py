@@ -13,6 +13,9 @@ from fastapi.responses import JSONResponse
 
 load_dotenv()
 
+from .features.calendar import add_event as cal_add_event
+from .features.calendar import get_events as cal_get_events
+from .features.calendar import parse_calendar_intent
 from .features.expense import ExpenseTracker, parse_expense_intent
 from .features.image_handler import analyze_image
 from .features.morning_summary import build_morning_message, get_active_chats, register_chat
@@ -184,6 +187,22 @@ async def _schedule_reminder(chat_id: str, reminder: dict) -> None:
         logger.exception("Failed to schedule reminder")
 
 
+async def _handle_cal_add(text: str) -> str:
+    """Parse event title + datetime from natural language and add to Apple Calendar."""
+    try:
+        client = factory.get_client()
+        reminder = await parse_reminder(text, client)
+        if reminder and reminder.get("datetime"):
+            from datetime import datetime as dt
+            run_dt = dt.fromisoformat(reminder["datetime"])
+            title = reminder.get("message", text)
+            return await cal_add_event(title, run_dt)
+        return "小恆恆看不懂要加什麼行程... 可以說清楚一點嗎？例如：「加行程 看牙醫 明天下午3點」"
+    except Exception:
+        logger.exception("_handle_cal_add error")
+        return "新增行程時出了點問題，可以再試一次嗎？"
+
+
 async def _try_schedule(text: str, chat_id: str) -> None:
     try:
         client = factory.get_client()
@@ -335,6 +354,14 @@ async def webhook(request: Request) -> Response:
                         except Exception:
                             pass
                     reply_text = await expense.add_expense(chat_id, amount, description, who)
+
+        # Apple Calendar
+        if reply_text is None:
+            cal_intent, days_ahead, cal_raw = parse_calendar_intent(text)
+            if cal_intent == "show":
+                reply_text = await cal_get_events(days_ahead)
+            elif cal_intent == "add":
+                reply_text = await _handle_cal_add(cal_raw)
 
         # ── LLM fallback ──────────────────────────────────────────────────
         if reply_text is None:
