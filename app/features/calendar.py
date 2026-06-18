@@ -16,7 +16,7 @@ def _get_credentials() -> tuple[str, str]:
 
 
 def _target_calendar_name() -> str:
-    return os.getenv("APPLE_CALENDAR_NAME", "Family")
+    return os.getenv("APPLE_CALENDAR_NAME", "家人")
 
 
 def _pick_calendar(calendars: list) -> object | None:
@@ -29,16 +29,16 @@ def _pick_calendar(calendars: list) -> object | None:
             name = ""
         if name == target:
             return cal
-    # Log available names so the user can diagnose a mismatch
+    # Collect available names so the error message is actionable
     names = []
     for cal in calendars:
         try:
             names.append(cal.name)
         except Exception:
             names.append("(unknown)")
-    logger.warning(
-        "Calendar '%s' not found. Available: %s", _target_calendar_name(), names
-    )
+    logger.warning("Calendar '%s' not found. Available: %s", _target_calendar_name(), names)
+    # Store on the sentinel so callers can include it in the error reply
+    _pick_calendar.available = names  # type: ignore[attr-defined]
     return None
 
 
@@ -111,9 +111,11 @@ def _sync_get_events(days_ahead: int) -> str:
         cal = _pick_calendar(principal.calendars())
 
         if cal is None:
+            available = getattr(_pick_calendar, "available", [])
+            hint = f"帳號裡有這些行事曆：{', '.join(available)}" if available else ""
             return (
-                f"找不到「{_target_calendar_name()}」行事曆... "
-                "請確認 APPLE_CALENDAR_NAME 設定正確，或改成你的行事曆名稱喔！"
+                f"找不到「{_target_calendar_name()}」行事曆。{hint} "
+                "請在 Railway Variables 設定正確的 APPLE_CALENDAR_NAME 喔！"
             )
 
         now = datetime.now(TAIWAN_TZ)
@@ -169,9 +171,11 @@ def _sync_add_event(title: str, dt: datetime, duration_minutes: int = 60) -> str
         cal = _pick_calendar(principal.calendars())
 
         if cal is None:
+            available = getattr(_pick_calendar, "available", [])
+            hint = f"帳號裡有：{', '.join(available)}" if available else ""
             return (
-                f"找不到「{_target_calendar_name()}」行事曆... "
-                "請確認 APPLE_CALENDAR_NAME 設定正確喔！"
+                f"找不到「{_target_calendar_name()}」行事曆。{hint} "
+                "請設定正確的 APPLE_CALENDAR_NAME 喔！"
             )
 
         dt_local = dt if dt.tzinfo else TAIWAN_TZ.localize(dt)
