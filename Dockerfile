@@ -6,9 +6,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN pip install --no-cache-dir \
     "hermes-agent[messaging]" \
-    hermes-weather-plugin \
     caldav==1.3.9 \
     redis==5.0.8 \
+    httpx==0.27.0 \
     pytz==2024.1
 
 # Seed config — copied to HERMES_HOME on every container start

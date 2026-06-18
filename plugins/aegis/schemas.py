@@ -203,3 +203,20 @@ GET_CARE_STATUS = {
     "description": "查詢今天是否已經做過某項照顧（例如：貓今天餵了嗎？）",
     "parameters": {"type": "object", "properties": {}},
 }
+
+# ---------------------------------------------------------------------------
+# Weather
+# ---------------------------------------------------------------------------
+GET_WEATHER = {
+    "name": "get_weather",
+    "description": "查詢目前天氣（使用 OpenWeather API）",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "city": {
+                "type": "string",
+                "description": "城市名稱（英文，例如 Taipei, Taichung），預設為 Taipei"
+            }
+        }
+    }
+}

@@ -406,3 +406,41 @@ def get_care_status(args: dict, **kw) -> str:
         return _ok({"date": datetime.now(TAIWAN_TZ).strftime('%Y-%m-%d'), "activities": activities})
     except Exception as exc:
         return _err(str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Weather
+# ---------------------------------------------------------------------------
+def get_weather(args: dict, **kw) -> str:
+    import urllib.request
+    import urllib.parse
+    
+    city = args.get("city", "Taipei")
+    api_key = os.getenv("OPENWEATHER_API_KEY", "")
+    if not api_key:
+        return _err("請先設定 OPENWEATHER_API_KEY 環境變數")
+    
+    try:
+        url = (
+            f"https://api.openweathermap.org/data/2.5/weather"
+            f"?q={urllib.parse.quote(city)}&appid={api_key}&units=metric&lang=zh_tw"
+        )
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode('utf-8'))
+                desc = data["weather"][0]["description"]
+                temp = data["main"]["temp"]
+                feels = data["main"]["feels_like"]
+                humidity = data["main"]["humidity"]
+                return _ok({
+                    "city": city,
+                    "description": desc,
+                    "temperature_c": temp,
+                    "feels_like_c": feels,
+                    "humidity": humidity
+                })
+            else:
+                return _err(f"Weather API returned status: {resp.status}")
+    except Exception as exc:
+        return _err(f"查詢天氣失敗: {exc}")

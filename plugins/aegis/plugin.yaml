@@ -21,3 +21,4 @@ provides_tools:
   - update_inventory
   - log_care_activity
   - get_care_status
+  - get_weather

@@ -19,6 +19,7 @@ _TOOLS = [
     ("update_inventory",     schemas.UPDATE_INVENTORY,     tools.update_inventory),
     ("log_care_activity",    schemas.LOG_CARE_ACTIVITY,    tools.log_care_activity),
     ("get_care_status",      schemas.GET_CARE_STATUS,      tools.get_care_status),
+    ("get_weather",          schemas.GET_WEATHER,          tools.get_weather),
 ]
 
 
