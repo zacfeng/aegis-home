@@ -9,7 +9,8 @@ RUN pip install --no-cache-dir \
     "hermes-agent[messaging]" \
     caldav==1.3.9 \
     redis==5.0.8 \
-    pytz==2024.1
+    pytz==2024.1 \
+    httpx
 
 # Seed config — copied to HERMES_HOME on every container start
 COPY SOUL.md     /opt/hermes-seed/SOUL.md

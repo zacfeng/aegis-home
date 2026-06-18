@@ -12,7 +12,14 @@ cp "$SEED_DIR/SOUL.md"     "$DATA_DIR/SOUL.md"
 cp "$SEED_DIR/config.yaml" "$DATA_DIR/config.yaml"
 cp -r "$SEED_DIR/plugins/." "$DATA_DIR/plugins/"
 
-# Let Railway's PORT drive the LINE webhook port
-export LINE_PORT="${PORT:-8646}"
+# 儲存 Railway 給的真實 PORT
+REAL_PORT="${PORT:-8000}"
 
-exec "$@"
+# 啟動背景的 Hermes Gateway，監聽 8646 (專收 LINE Webhook)
+export PORT=8646
+export LINE_PORT=8646
+hermes gateway &
+
+# 啟動前景的自訂捷徑 API 代理伺服器，監聽 Railway 給的真實 PORT
+export PORT="$REAL_PORT"
+exec python /opt/hermes-data/api.py
