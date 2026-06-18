@@ -13,17 +13,6 @@ cp "$SEED_DIR/config.yaml" "$DATA_DIR/config.yaml"
 cp -r "$SEED_DIR/plugins/." "$DATA_DIR/plugins/"
 cp "$SEED_DIR/api.py" "$DATA_DIR/api.py"
 
-# 儲存 Railway 給的真實 PORT
-REAL_PORT="${PORT:-8000}"
-
-# 啟動背景的 Hermes Gateway，監聽 8646 (專收 LINE Webhook)
-export PORT=8646
-export LINE_PORT=8646
-hermes gateway &
-
-# 等待 Gateway 完全啟動
-sleep 3
-
-# 啟動前景的自訂捷徑 API 代理伺服器，監聽 Railway 給的真實 PORT
-export PORT="$REAL_PORT"
+# 直接啟動我們自己的 API 伺服器
+# 同時處理 LINE Webhook 和 iOS 捷徑
 exec python /opt/hermes-data/api.py
