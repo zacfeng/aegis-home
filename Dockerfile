@@ -12,6 +12,10 @@ RUN pip install --no-cache-dir \
     pytz==2024.1 \
     httpx
 
+# Apply the Gemini native client mock streaming patch
+COPY patch_adapter.py /tmp/patch_adapter.py
+RUN python /tmp/patch_adapter.py && rm /tmp/patch_adapter.py
+
 # Seed config — copied to HERMES_HOME on every container start
 COPY SOUL.md     /opt/hermes-seed/SOUL.md
 COPY config.yaml /opt/hermes-seed/config.yaml
