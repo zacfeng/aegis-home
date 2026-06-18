@@ -15,7 +15,7 @@ load_dotenv()
 
 from .features.expense import ExpenseTracker
 from .features.image_handler import analyze_image
-from .features.morning_summary import build_morning_message, get_active_chats, register_chat
+
 from .features.shopping import ShoppingList
 from .features.voice_handler import handle_voice
 from .line_handler import (
@@ -121,17 +121,7 @@ async def lifespan(_app: FastAPI):
     scheduler.start()
     logger.info("Scheduler started")
 
-    if _redis_client:
-        scheduler.add_job(
-            _send_morning_summary,
-            trigger="cron",
-            hour=8,
-            minute=0,
-            timezone=TAIWAN_TZ,
-            id="morning_summary",
-            replace_existing=True,
-        )
-        logger.info("Morning summary cron registered")
+
 
     yield
 
@@ -178,17 +168,7 @@ def _should_respond(text: str, event: dict, msg: dict) -> tuple[bool, str]:
     return False, text
 
 
-async def _send_morning_summary() -> None:
-    if not _redis_client:
-        return
-    try:
-        msg = await build_morning_message()
-        chats = await get_active_chats(_redis_client)
-        for chat_id in chats:
-            await push_message(chat_id, msg)
-        logger.info("Morning summary sent to %d chat(s)", len(chats))
-    except Exception:
-        logger.exception("Morning summary failed")
+
 
 
 # ---------------------------------------------------------------------------
@@ -236,9 +216,6 @@ async def webhook(request: Request) -> Response:
         user_id = source.get("userId", "")
         group_id = source.get("groupId")
 
-        # Register chat for morning summaries
-        if _redis_client:
-            asyncio.ensure_future(register_chat(_redis_client, chat_id))
 
         # ── Image ──────────────────────────────────────────────────────────
         if msg_type == "image":

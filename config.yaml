@@ -1,0 +1,31 @@
+model:
+  default: "google/gemini-2.0-flash-001"
+  provider: "openrouter"
+
+gateway:
+  platforms:
+    line:
+      enabled: true
+
+display:
+  tool_progress: all
+  interim_assistant_messages: false
+  streaming: false
+  platforms:
+    line:
+      tool_progress: off
+
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+
+agent:
+  max_turns: 20
+  # 關閉不需要的工具集（家庭助理不需要 terminal / 瀏覽器）
+  disabled_toolsets:
+    - terminal
+    - files
+    - code_execution
+
+scheduler:
+  enabled: true

@@ -1,0 +1,23 @@
+name: aegis
+version: 1.0.0
+description: "AegisHome — Apple Calendar, shopping list, expense tracker for the family"
+author: AegisHome
+provides_tools:
+  - get_calendar_events
+  - add_calendar_event
+  - get_shopping_list
+  - add_shopping_item
+  - remove_shopping_item
+  - clear_shopping_list
+  - add_expense
+  - get_expense_summary
+  - get_chores
+  - add_chore
+  - remove_chore
+  - leave_message
+  - get_messages
+  - clear_messages
+  - get_inventory
+  - update_inventory
+  - log_care_activity
+  - get_care_status
