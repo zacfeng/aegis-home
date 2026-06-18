@@ -16,5 +16,4 @@ provides_tools:
   - remove_chore
   - get_inventory
   - update_inventory
-  - log_care_activity
-  - get_care_status
+  - get_consumption_queue

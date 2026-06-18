@@ -37,8 +37,8 @@ def _redis():
 
 
 def _cal_connect():
-    username = os.getenv("APPLE_ID", "")
-    password = os.getenv("APPLE_APP_PASSWORD", "")
+    username = os.getenv("APPLE_ID", "").strip("'\"")
+    password = os.getenv("APPLE_APP_PASSWORD", "").strip("'\"")
     print(f"[DEBUG] _cal_connect called. APPLE_ID: {'set (' + username[:3] + '...)' if username else 'NOT SET'}, APPLE_APP_PASSWORD: {'set' if password else 'NOT SET'}", flush=True)
     if not username or not password:
         raise RuntimeError("需要設定 APPLE_ID 和 APPLE_APP_PASSWORD")
@@ -47,7 +47,7 @@ def _cal_connect():
 
 
 def _pick_calendar(client):
-    target = os.getenv("APPLE_CALENDAR_NAME", "家人").lower()
+    target = os.getenv("APPLE_CALENDAR_NAME", "家人").strip("'\"").lower()
     principal = client.principal()
     calendars = principal.calendars()
     for cal in calendars:
@@ -178,12 +178,23 @@ def add_calendar_event(args: dict, **kw) -> str:
 # ---------------------------------------------------------------------------
 # Shopping list
 # ---------------------------------------------------------------------------
+def _parse_shopping_item(raw_val: str) -> dict:
+    try:
+        data = json.loads(raw_val)
+        if isinstance(data, dict) and "item" in data:
+            return {"item": data["item"], "category": data.get("category", "一般")}
+    except Exception:
+        pass
+    return {"item": raw_val, "category": "一般"}
+
+
 def get_shopping_list(args: dict, **kw) -> str:
     r = _redis()
     if not r:
         return _err("需要設定 REDIS_URL 才能使用購物清單")
     try:
-        items = list(r.lrange(_SHOPPING_KEY, 0, -1))
+        raw_items = list(r.lrange(_SHOPPING_KEY, 0, -1))
+        items = [_parse_shopping_item(i) for i in raw_items]
         return _ok({"items": items})
     except Exception as exc:
         return _err(str(exc))
@@ -195,9 +206,16 @@ def add_shopping_item(args: dict, **kw) -> str:
         return _err("需要設定 REDIS_URL")
     try:
         item = args["item"]
-        r.rpush(_SHOPPING_KEY, item)
-        items = list(r.lrange(_SHOPPING_KEY, 0, -1))
-        return _ok({"added": item, "items": items})
+        category = args.get("category", "一般").strip()
+        if not category:
+            category = "一般"
+        
+        val = json.dumps({"item": item, "category": category}, ensure_ascii=False)
+        r.rpush(_SHOPPING_KEY, val)
+        
+        raw_items = list(r.lrange(_SHOPPING_KEY, 0, -1))
+        items = [_parse_shopping_item(i) for i in raw_items]
+        return _ok({"added": {"item": item, "category": category}, "items": items})
     except Exception as exc:
         return _err(str(exc))
 
@@ -207,12 +225,27 @@ def remove_shopping_item(args: dict, **kw) -> str:
     if not r:
         return _err("需要設定 REDIS_URL")
     try:
-        item = args["item"]
-        removed = r.lrem(_SHOPPING_KEY, 0, item)
-        if removed == 0:
-            return _err(f"清單裡找不到「{item}」")
-        items = list(r.lrange(_SHOPPING_KEY, 0, -1))
-        return _ok({"removed": item, "items": items})
+        target_item = args["item"]
+        target_category = args.get("category")
+        
+        raw_items = list(r.lrange(_SHOPPING_KEY, 0, -1))
+        removed_count = 0
+        
+        for raw_val in raw_items:
+            parsed = _parse_shopping_item(raw_val)
+            if parsed["item"] == target_item:
+                if target_category is None or parsed["category"] == target_category:
+                    r.lrem(_SHOPPING_KEY, 1, raw_val)
+                    removed_count += 1
+                    break
+        
+        if removed_count == 0:
+            category_info = f"（於 {target_category}）" if target_category else ""
+            return _err(f"清單裡找不到「{target_item}」{category_info}")
+            
+        raw_items = list(r.lrange(_SHOPPING_KEY, 0, -1))
+        items = [_parse_shopping_item(i) for i in raw_items]
+        return _ok({"removed": target_item, "category": target_category, "items": items})
     except Exception as exc:
         return _err(str(exc))
 
@@ -222,8 +255,22 @@ def clear_shopping_list(args: dict, **kw) -> str:
     if not r:
         return _err("需要設定 REDIS_URL")
     try:
-        r.delete(_SHOPPING_KEY)
-        return _ok({"cleared": True})
+        target_category = args.get("category")
+        if target_category:
+            raw_items = list(r.lrange(_SHOPPING_KEY, 0, -1))
+            to_keep = []
+            for raw_val in raw_items:
+                parsed = _parse_shopping_item(raw_val)
+                if parsed["category"] != target_category:
+                    to_keep.append(raw_val)
+            
+            r.delete(_SHOPPING_KEY)
+            if to_keep:
+                r.rpush(_SHOPPING_KEY, *to_keep)
+            return _ok({"cleared_category": target_category})
+        else:
+            r.delete(_SHOPPING_KEY)
+            return _ok({"cleared_all": True})
     except Exception as exc:
         return _err(str(exc))
 
@@ -322,13 +369,36 @@ def remove_chore(args: dict, **kw) -> str:
 # ---------------------------------------------------------------------------
 # Inventory
 # ---------------------------------------------------------------------------
+def _parse_inventory_item(raw_val: str) -> dict:
+    try:
+        data = json.loads(raw_val)
+        if isinstance(data, dict):
+            return {
+                "status": data.get("status", "充足"),
+                "expiry_date": data.get("expiry_date"),
+                "consume_within_days": data.get("consume_within_days"),
+                "updated_at": data.get("updated_at")
+            }
+    except Exception:
+        pass
+    return {
+        "status": raw_val,
+        "expiry_date": None,
+        "consume_within_days": None,
+        "updated_at": None
+    }
+
+
 def get_inventory(args: dict, **kw) -> str:
     r = _redis()
     if not r:
         return _err("需要設定 REDIS_URL 才能使用庫存追蹤")
     try:
-        items = r.hgetall(_INVENTORY_KEY)
-        return _ok({"inventory": items})
+        raw_items = r.hgetall(_INVENTORY_KEY)
+        parsed = {}
+        for item, val in raw_items.items():
+            parsed[item] = _parse_inventory_item(val)
+        return _ok({"inventory": parsed})
     except Exception as exc:
         return _err(str(exc))
 
@@ -339,40 +409,71 @@ def update_inventory(args: dict, **kw) -> str:
         return _err("需要設定 REDIS_URL 才能使用庫存追蹤")
     try:
         item = args["item"]
-        status = args["status"]
-        r.hset(_INVENTORY_KEY, item, status)
-        return _ok({"item": item, "status": status})
+        status = args.get("status", "充足").strip()
+        if not status:
+            status = "充足"
+        
+        expiry_date = args.get("expiry_date")
+        consume_within_days = args.get("consume_within_days")
+        now_str = datetime.now(TAIWAN_TZ).isoformat()
+        
+        val_data = {
+            "status": status,
+            "expiry_date": expiry_date,
+            "consume_within_days": consume_within_days,
+            "updated_at": now_str
+        }
+        
+        r.hset(_INVENTORY_KEY, item, json.dumps(val_data, ensure_ascii=False))
+        return _ok({"item": item, "updated": val_data})
     except Exception as exc:
         return _err(str(exc))
 
 
-# ---------------------------------------------------------------------------
-# Pet & Plant Care
-# ---------------------------------------------------------------------------
-def log_care_activity(args: dict, **kw) -> str:
+def get_consumption_queue(args: dict, **kw) -> str:
     r = _redis()
     if not r:
-        return _err("需要設定 REDIS_URL 才能使用照顧追蹤")
+        return _err("需要設定 REDIS_URL 才能使用庫存追蹤")
     try:
-        act = args["activity"]
-        now_str = datetime.now(TAIWAN_TZ).strftime("%H:%M")
-        entry = f"[{now_str}] {act}"
-        key = f"aegis:care:{datetime.now(TAIWAN_TZ).strftime('%Y-%m-%d')}"
-        r.rpush(key, entry)
-        r.expire(key, 60 * 60 * 24 * 7)  # keep for 7 days
-        return _ok({"logged": entry})
-    except Exception as exc:
-        return _err(str(exc))
-
-
-def get_care_status(args: dict, **kw) -> str:
-    r = _redis()
-    if not r:
-        return _err("需要設定 REDIS_URL 才能使用照顧追蹤")
-    try:
-        key = f"aegis:care:{datetime.now(TAIWAN_TZ).strftime('%Y-%m-%d')}"
-        activities = list(r.lrange(key, 0, -1))
-        return _ok({"date": datetime.now(TAIWAN_TZ).strftime('%Y-%m-%d'), "activities": activities})
+        raw_items = r.hgetall(_INVENTORY_KEY)
+        now = datetime.now(TAIWAN_TZ).date()
+        
+        queue = []
+        for item, val in raw_items.items():
+            parsed = _parse_inventory_item(val)
+            expiry_date = parsed.get("expiry_date")
+            consume_within_days = parsed.get("consume_within_days")
+            updated_at_str = parsed.get("updated_at")
+            
+            target_date = None
+            if expiry_date:
+                try:
+                    target_date = datetime.strptime(expiry_date, "%Y-%m-%d").date()
+                except Exception:
+                    pass
+            
+            if consume_within_days is not None and updated_at_str:
+                try:
+                    updated_at = datetime.fromisoformat(updated_at_str).date()
+                    consume_date = updated_at + timedelta(days=int(consume_within_days))
+                    if target_date is None or consume_date < target_date:
+                        target_date = consume_date
+                except Exception:
+                    pass
+            
+            if target_date:
+                days_left = (target_date - now).days
+                queue.append({
+                    "item": item,
+                    "status": parsed["status"],
+                    "expiry_date": expiry_date,
+                    "consume_within_days": consume_within_days,
+                    "target_date": target_date.strftime("%Y-%m-%d"),
+                    "days_left": days_left
+                })
+        
+        queue.sort(key=lambda x: x["target_date"])
+        return _ok({"consumption_queue": queue})
     except Exception as exc:
         return _err(str(exc))
 

@@ -46,11 +46,12 @@ GET_SHOPPING_LIST = {
 
 ADD_SHOPPING_ITEM = {
     "name": "add_shopping_item",
-    "description": "新增項目到購物清單",
+    "description": "新增項目到購物清單。可指定購買的地點、商場或類別（例如：Costco、全聯、傳統市場，選填，預設為「一般」）。",
     "parameters": {
         "type": "object",
         "properties": {
-            "item": {"type": "string", "description": "要購買的東西"}
+            "item": {"type": "string", "description": "要購買的東西"},
+            "category": {"type": "string", "description": "商場、超市、市場或分類名稱（例如：Costco、全聯，選填）"}
         },
         "required": ["item"],
     },
@@ -58,11 +59,12 @@ ADD_SHOPPING_ITEM = {
 
 REMOVE_SHOPPING_ITEM = {
     "name": "remove_shopping_item",
-    "description": "從購物清單移除已購買的項目",
+    "description": "從購物清單移除已購買的項目。可指定特定的商場或分類以精準移除。",
     "parameters": {
         "type": "object",
         "properties": {
-            "item": {"type": "string", "description": "已買完的東西"}
+            "item": {"type": "string", "description": "已買完的東西"},
+            "category": {"type": "string", "description": "商場或分類名稱，選填"}
         },
         "required": ["item"],
     },
@@ -70,8 +72,13 @@ REMOVE_SHOPPING_ITEM = {
 
 CLEAR_SHOPPING_LIST = {
     "name": "clear_shopping_list",
-    "description": "清空整個購物清單",
-    "parameters": {"type": "object", "properties": {}},
+    "description": "清空購物清單。可指定商場或分類名稱以僅清空該商場的項目，未指定則清空整個清單。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "category": {"type": "string", "description": "商場或分類名稱，選填"}
+        },
+    },
 }
 
 ADD_EXPENSE = {
@@ -145,35 +152,22 @@ GET_INVENTORY = {
 
 UPDATE_INVENTORY = {
     "name": "update_inventory",
-    "description": "更新特定物品的庫存狀態",
+    "description": "新增或更新物品的庫存狀態、到期日及預期消耗時間（天數）",
     "parameters": {
         "type": "object",
         "properties": {
             "item": {"type": "string", "description": "物品名稱"},
-            "status": {"type": "string", "description": "庫存狀態（例如：充足、快用完、已空）"}
+            "status": {"type": "string", "description": "庫存狀態（例如：充足、快用完、已空，選填，預設為「充足」）"},
+            "expiry_date": {"type": "string", "description": "到期日期，格式為 YYYY-MM-DD（例如：2026-06-25，選填）"},
+            "consume_within_days": {"type": "integer", "description": "預計要在幾天內消耗完畢（填寫天數整數，例如：5，選填）"}
         },
-        "required": ["item", "status"]
+        "required": ["item"]
     }
 }
 
-# ---------------------------------------------------------------------------
-# Pet & Plant Care Tracker
-# ---------------------------------------------------------------------------
-LOG_CARE_ACTIVITY = {
-    "name": "log_care_activity",
-    "description": "紀錄已完成的照顧項目（例如：已餵貓、已澆花）",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "activity": {"type": "string", "description": "照顧項目"}
-        },
-        "required": ["activity"]
-    }
-}
-
-GET_CARE_STATUS = {
-    "name": "get_care_status",
-    "description": "查詢今天是否已經做過某項照顧（例如：貓今天餵了嗎？）",
+GET_CONSUMPTION_QUEUE = {
+    "name": "get_consumption_queue",
+    "description": "查詢待消耗清單，將會列出即將過期或需要儘快消耗的物品，並依照到期或剩餘消耗時間由近到遠（即將過期優先）排序。",
     "parameters": {"type": "object", "properties": {}},
 }
 

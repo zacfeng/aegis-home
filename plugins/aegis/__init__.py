@@ -14,8 +14,7 @@ _TOOLS = [
     ("remove_chore",         schemas.REMOVE_CHORE,         tools.remove_chore),
     ("get_inventory",        schemas.GET_INVENTORY,        tools.get_inventory),
     ("update_inventory",     schemas.UPDATE_INVENTORY,     tools.update_inventory),
-    ("log_care_activity",    schemas.LOG_CARE_ACTIVITY,    tools.log_care_activity),
-    ("get_care_status",      schemas.GET_CARE_STATUS,      tools.get_care_status),
+    ("get_consumption_queue", schemas.GET_CONSUMPTION_QUEUE, tools.get_consumption_queue),
 ]
 
 

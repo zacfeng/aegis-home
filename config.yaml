@@ -10,6 +10,7 @@ gateway:
       trigger_words:
         - "小恆恆"
         - "橫隔膜"
+        - "小幫手"
 
 display:
   tool_progress: all
@@ -34,3 +35,7 @@ agent:
 
 scheduler:
   enabled: true
+
+plugins:
+  enabled:
+    - aegis
