@@ -11,6 +11,7 @@ mkdir -p "$DATA_DIR/plugins"
 cp "$SEED_DIR/SOUL.md"     "$DATA_DIR/SOUL.md"
 cp "$SEED_DIR/config.yaml" "$DATA_DIR/config.yaml"
 cp -r "$SEED_DIR/plugins/." "$DATA_DIR/plugins/"
+cp "$SEED_DIR/api.py" "$DATA_DIR/api.py"
 
 # 儲存 Railway 給的真實 PORT
 REAL_PORT="${PORT:-8000}"

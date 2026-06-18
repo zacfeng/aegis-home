@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir \
 COPY SOUL.md     /opt/hermes-seed/SOUL.md
 COPY config.yaml /opt/hermes-seed/config.yaml
 COPY plugins/    /opt/hermes-seed/plugins/
+COPY api.py      /opt/hermes-seed/api.py
 
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh

@@ -4,8 +4,7 @@ from fastapi import FastAPI, HTTPException, Header, Request, Response
 from pydantic import BaseModel
 import uvicorn
 
-# 引入 Hermes 核心代理
-from agent.core import Agent
+
 
 app = FastAPI()
 
@@ -19,22 +18,24 @@ HERMES_API_KEY = os.environ.get("SHORTCUT_API_KEY", "my_secret_key")
 GATEWAY_URL = "http://127.0.0.1:8646"
 
 # 1. 專屬給 iOS 捷徑的 API
+import subprocess
+
 @app.post("/v1/shortcut")
 async def handle_shortcut(payload: ShortcutPayload, x_api_key: str = Header(None)):
     if x_api_key != HERMES_API_KEY:
         raise HTTPException(status_code=401, detail="Unauthorized")
     
-    # 建立 Agent 實例
-    hermes = Agent()
-    
-    # 將對話傳進去，這裡會自帶記憶跟工具調用！
     try:
-        response = await hermes.process_message(
-            message=payload.message, 
-            user_id=payload.user_id,
-            platform="apple_shortcut"
-        )
-        return {"reply": response.text}
+        # 使用 subprocess 呼叫 hermes CLI 的單次回覆模式
+        cmd = ["hermes", "chat", "-q", payload.message, "-Q"]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        # 將標準輸出作為回覆，若為空則嘗試回傳標準錯誤
+        reply = result.stdout.strip()
+        if not reply:
+            reply = result.stderr.strip()
+            
+        return {"reply": reply}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
