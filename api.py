@@ -8,9 +8,18 @@ import uvicorn
 
 app = FastAPI()
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 class ShortcutPayload(BaseModel):
-    message: str
+    message: str = None
+    Body: str = None       # iOS 捷徑預設會用大寫 Body
     user_id: str = "apple_shortcut_user"
+    
+    def get_message(self):
+        """優先用 message，沒有的話就用 Body"""
+        return self.message or self.Body or ""
 
 # 這裡的密鑰可以自己改，iOS 捷徑裡面也要設成一樣的
 HERMES_API_KEY = os.environ.get("SHORTCUT_API_KEY", "my_secret_key")
@@ -27,7 +36,10 @@ async def handle_shortcut(payload: ShortcutPayload, x_api_key: str = Header(None
     
     try:
         # 使用 subprocess 呼叫 hermes CLI 的單次回覆模式
-        cmd = ["hermes", "chat", "-q", payload.message, "-Q"]
+        msg = payload.get_message()
+        if not msg:
+            raise HTTPException(status_code=400, detail="message is required")
+        cmd = ["hermes", "chat", "-q", msg, "-Q"]
         result = subprocess.run(cmd, capture_output=True, text=True)
         
         # 將標準輸出作為回覆，若為空則嘗試回傳標準錯誤
