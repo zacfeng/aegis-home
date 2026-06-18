@@ -1,6 +1,7 @@
 model:
   default: "gemini-3.5-flash"
   provider: "gemini"
+  max_tokens: 4096
 
 gateway:
   allow_all_users: true
