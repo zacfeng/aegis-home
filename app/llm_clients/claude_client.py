@@ -18,6 +18,7 @@ class ClaudeClient(LLMClient):
         self,
         user_message: str,
         history: List[Dict[str, str]],
+        system_prompt: str = "",
     ) -> str:
         messages = [
             {"role": turn["role"], "content": turn["content"]}
@@ -25,9 +26,13 @@ class ClaudeClient(LLMClient):
         ]
         messages.append({"role": "user", "content": user_message})
 
-        response = await self._client.messages.create(
+        kwargs = dict(
             model=self._model_name,
             max_tokens=1024,
             messages=messages,
         )
+        if system_prompt:
+            kwargs["system"] = system_prompt
+
+        response = await self._client.messages.create(**kwargs)
         return response.content[0].text

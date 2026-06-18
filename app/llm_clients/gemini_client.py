@@ -18,7 +18,16 @@ class GeminiClient(LLMClient):
         self,
         user_message: str,
         history: List[Dict[str, str]],
+        system_prompt: str = "",
     ) -> str:
+        model = (
+            genai.GenerativeModel(
+                self._model.model_name,
+                system_instruction=system_prompt,
+            )
+            if system_prompt
+            else self._model
+        )
         # Gemini SDK uses 'model' instead of 'assistant' for the role
         gemini_history = [
             {
@@ -27,7 +36,6 @@ class GeminiClient(LLMClient):
             }
             for turn in history
         ]
-
-        chat = self._model.start_chat(history=gemini_history)
+        chat = model.start_chat(history=gemini_history)
         response = await chat.send_message_async(user_message)
         return response.text

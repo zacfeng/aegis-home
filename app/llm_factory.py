@@ -3,12 +3,14 @@ from typing import Literal
 from .llm_clients.base import LLMClient
 from .llm_clients.gemini_client import GeminiClient
 from .llm_clients.claude_client import ClaudeClient
+from .llm_clients.hermes_client import HermesClient
 
-ModelName = Literal["gemini", "claude"]
+ModelName = Literal["gemini", "claude", "hermes"]
 
 _REGISTRY: dict[ModelName, type[LLMClient]] = {
     "gemini": GeminiClient,
     "claude": ClaudeClient,
+    "hermes": HermesClient,
 }
 
 
