@@ -1,6 +1,6 @@
 model:
-  default: "anthropic/claude-4.6-sonnet"
-  provider: "openrouter"
+  default: "gemini-3.5-flash"
+  provider: "gemini"
 
 gateway:
   allow_all_users: true
@@ -30,6 +30,7 @@ agent:
     - terminal
     - files
     - code_execution
+    - browser
 
 scheduler:
   enabled: true

@@ -10,9 +10,6 @@ RUN pip install --no-cache-dir \
     redis==5.0.8 \
     pytz==2024.1
 
-# 預先安裝瀏覽器引擎，避免在 Railway 背景部署時卡在 [Y/n] 的詢問畫面
-RUN playwright install chromium --with-deps
-
 # Seed config — copied to HERMES_HOME on every container start
 COPY SOUL.md     /opt/hermes-seed/SOUL.md
 COPY config.yaml /opt/hermes-seed/config.yaml
