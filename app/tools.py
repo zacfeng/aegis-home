@@ -8,7 +8,27 @@ import pytz
 logger = logging.getLogger(__name__)
 TAIWAN_TZ = pytz.timezone("Asia/Taipei")
 
-# Gemini function_declarations format (JSON Schema)
+# Sentinel prefix: if a tool result starts with this, the calling loop will
+# short-circuit and return the message directly WITHOUT sending it back to
+# Gemini — preventing hallucination when tools fail.
+_ERR = "\x00ERR\x00:"
+
+
+def _err(msg: str) -> str:
+    return f"{_ERR}{msg}"
+
+
+def is_tool_error(result: str) -> bool:
+    return result.startswith(_ERR)
+
+
+def strip_err(result: str) -> str:
+    return result[len(_ERR):]
+
+
+# ---------------------------------------------------------------------------
+# Tool declarations (Gemini function_declarations JSON Schema)
+# ---------------------------------------------------------------------------
 DECLARATIONS = [
     {
         "name": "get_calendar_events",
@@ -119,62 +139,78 @@ class ToolContext:
     expense: Any    # ExpenseTracker | None
 
 
+# Strings that the calendar feature returns on failure — used to detect errors
+_CAL_ERROR_PREFIXES = ("需要先設定", "找不到", "讀取行事曆時出錯", "需要安裝")
+
+
 async def execute_tool(name: str, args: dict, ctx: ToolContext) -> str:
-    """Dispatch a tool call to the appropriate feature module."""
+    """
+    Dispatch a tool call to the appropriate feature module.
+
+    Returns a plain string on success, or _err(msg) on failure.
+    The caller (generate_with_tools) will short-circuit on _err results
+    so Gemini never gets a chance to hallucinate around a failure.
+    """
     logger.info("Tool call: %s(%s)", name, args)
     try:
         match name:
+            # ── Calendar ──────────────────────────────────────────────────
             case "get_calendar_events":
                 from .features.calendar import get_events, get_week_events
                 period = args.get("period", "today")
                 if period == "today":
-                    return await get_events(0)
+                    result = await get_events(0)
                 elif period == "tomorrow":
-                    return await get_events(1)
+                    result = await get_events(1)
                 elif period == "this_week":
-                    return await get_week_events(0)
-                else:  # next_week
-                    return await get_week_events(1)
+                    result = await get_week_events(0)
+                else:
+                    result = await get_week_events(1)
+                return _err(result) if result.startswith(_CAL_ERROR_PREFIXES) else result
 
             case "add_calendar_event":
                 from .features.calendar import add_event
                 dt = datetime.fromisoformat(args["datetime_iso"])
                 if dt.tzinfo is None:
                     dt = TAIWAN_TZ.localize(dt)
-                return await add_event(args["title"], dt, args.get("duration_minutes", 60))
+                result = await add_event(args["title"], dt, args.get("duration_minutes", 60))
+                return _err(result) if result.startswith(_CAL_ERROR_PREFIXES + ("新增行程失敗",)) else result
 
+            # ── Shopping ──────────────────────────────────────────────────
             case "get_shopping_list":
                 if not ctx.shopping:
-                    return "需要設定 Redis 才能使用購物清單"
+                    return _err("需要設定 Redis 才能使用購物清單")
                 return await ctx.shopping.show_list(ctx.chat_id)
 
             case "add_shopping_item":
                 if not ctx.shopping:
-                    return "需要設定 Redis 才能使用購物清單"
+                    return _err("需要設定 Redis 才能使用購物清單")
                 return await ctx.shopping.add_item(ctx.chat_id, args["item"])
 
             case "remove_shopping_item":
                 if not ctx.shopping:
-                    return "需要設定 Redis 才能使用購物清單"
+                    return _err("需要設定 Redis 才能使用購物清單")
                 return await ctx.shopping.remove_item(ctx.chat_id, args["item"])
 
             case "clear_shopping_list":
                 if not ctx.shopping:
-                    return "需要設定 Redis 才能使用購物清單"
+                    return _err("需要設定 Redis 才能使用購物清單")
                 return await ctx.shopping.clear_list(ctx.chat_id)
 
+            # ── Expense ───────────────────────────────────────────────────
             case "add_expense":
                 if not ctx.expense:
-                    return "需要設定 Redis 才能使用記帳功能"
+                    return _err("需要設定 Redis 才能使用記帳功能")
                 return await ctx.expense.add_expense(
                     ctx.chat_id, args["amount"], args["description"], ctx.who
                 )
 
             case "get_expense_summary":
                 if not ctx.expense:
-                    return "需要設定 Redis 才能使用記帳功能"
+                    return _err("需要設定 Redis 才能使用記帳功能")
                 return await ctx.expense.monthly_summary(ctx.chat_id)
 
+            # ── Reminder ──────────────────────────────────────────────────
             case "set_reminder":
                 from .line_handler import push_message
                 from .scheduler import scheduler
@@ -182,9 +218,8 @@ async def execute_tool(name: str, args: dict, ctx: ToolContext) -> str:
                 dt = datetime.fromisoformat(args["datetime_iso"])
                 if dt.tzinfo is None:
                     dt = TAIWAN_TZ.localize(dt)
-                now = datetime.now(TAIWAN_TZ)
-                if dt <= now:
-                    return "提醒時間已經過去了喔！"
+                if dt <= datetime.now(TAIWAN_TZ):
+                    return _err("提醒時間已經過去了喔！請改一個未來的時間")
 
                 chat_id = ctx.chat_id
                 message = args["message"]
@@ -203,8 +238,8 @@ async def execute_tool(name: str, args: dict, ctx: ToolContext) -> str:
 
             case _:
                 logger.warning("Unknown tool: %s", name)
-                return f"不認識這個工具：{name}"
+                return _err(f"不認識這個工具：{name}")
 
     except Exception as e:
         logger.exception("Tool %s failed with args %s", name, args)
-        return f"工具執行錯誤：{e}"
+        return _err(f"工具執行錯誤：{e}")

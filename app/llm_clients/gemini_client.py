@@ -75,15 +75,21 @@ class GeminiClient(LLMClient):
             ]
 
             if not fc_parts:
-                # No (more) tool calls — return the final text
                 return response.text
 
             # Execute every tool the model requested (may be >1 in one turn)
             tool_responses = []
             for part in fc_parts:
+                from ..tools import is_tool_error, strip_err
                 fc = part.function_call
                 result = await tool_executor(fc.name, dict(fc.args))
                 logger.info("Tool %s → %.120s", fc.name, result)
+
+                # Short-circuit: if the tool failed, return the error message
+                # directly WITHOUT going back to Gemini (prevents hallucination).
+                if is_tool_error(result):
+                    return strip_err(result)
+
                 tool_responses.append(
                     genai.protos.Part(
                         function_response=genai.protos.FunctionResponse(
@@ -95,5 +101,4 @@ class GeminiClient(LLMClient):
 
             response = await chat.send_message_async(tool_responses)
 
-        # Safety fallback — should not normally be reached
         return response.text
