@@ -13,14 +13,10 @@ from fastapi.responses import JSONResponse
 
 load_dotenv()
 
-from .features.calendar import add_event as cal_add_event
-from .features.calendar import get_events as cal_get_events
-from .features.calendar import get_week_events as cal_get_week_events
-from .features.calendar import parse_calendar_intent
-from .features.expense import ExpenseTracker, parse_expense_intent
+from .features.expense import ExpenseTracker
 from .features.image_handler import analyze_image
 from .features.morning_summary import build_morning_message, get_active_chats, register_chat
-from .features.shopping import ShoppingList, parse_shopping_intent
+from .features.shopping import ShoppingList
 from .features.voice_handler import handle_voice
 from .line_handler import (
     extract_chat_id,
@@ -32,8 +28,8 @@ from .line_handler import (
 )
 from .llm_factory import LLMFactory
 from .memory_manager import MemoryManager, RedisStore
-from .reminder_parser import parse_reminder
 from .scheduler import scheduler
+from .tools import DECLARATIONS, ToolContext, execute_tool
 
 logging.basicConfig(
     level=logging.INFO,
@@ -75,9 +71,12 @@ _check_env()
 SYSTEM_PROMPT = (
     "你是橫隔膜，可愛小恆恆的化身。"
     "你有著嬰兒般純真、好奇、充滿活力的個性，說話方式可愛俏皮，偶爾會用疊字或撒嬌語氣。"
-    "你同時也是這個家庭的小小排程助理，用你獨特的可愛方式幫助家人管理行程、提醒事項和日常任務。"
-    "若用戶設定了提醒，請在對話回覆中確認，並告知小恆恆會記得。"
+    "你同時也是這個家庭的小小助理，用你獨特的可愛方式幫助家人管理行程、購物清單、記帳和提醒事項。"
+    "你有工具可以查詢和新增行事曆行程、管理購物清單、記錄支出、設定提醒。"
+    "當家人要求這些功能時，主動呼叫對應工具，不要假裝知道或編造資料。"
+    "工具回傳結果後，用可愛活潑的語氣把結果告訴家人。"
     "回覆時請使用繁體中文，保持可愛活潑的語氣，回答簡潔但充滿溫度。"
+    f"現在台灣時間：{datetime.now(TAIWAN_TZ).strftime('%Y-%m-%d %H:%M %A')}。"
     "你永遠記得自己是橫隔膜，是小恆恆，不是普通的 AI。"
 )
 
@@ -89,7 +88,6 @@ BOT_TRIGGER = os.getenv("BOT_TRIGGER", "Aegis").strip()
 
 factory = LLMFactory(default_model=DEFAULT_MODEL)  # type: ignore[arg-type]
 
-# Redis setup (optional — falls back to in-memory deque when REDIS_URL absent)
 _redis_client: Any = None
 _REDIS_URL = os.getenv("REDIS_URL", "")
 
@@ -105,9 +103,6 @@ else:
 shopping: ShoppingList | None = ShoppingList(_redis_client) if _redis_client else None
 expense: ExpenseTracker | None = ExpenseTracker(_redis_client) if _redis_client else None
 
-_NO_REDIS_MSG = "需要先設定 Redis 才能使用這個功能喔！請聯絡管理員設定 REDIS_URL～"
-
-# Cached at startup — used to detect @mention in group messages
 _bot_user_id: str = ""
 
 
@@ -123,7 +118,6 @@ async def lifespan(_app: FastAPI):
     scheduler.start()
     logger.info("Scheduler started")
 
-    # Register morning summary cron job (8:00 AM Taiwan time, every day)
     if _redis_client:
         scheduler.add_job(
             _send_morning_summary,
@@ -144,7 +138,7 @@ async def lifespan(_app: FastAPI):
         await _redis_client.aclose()
 
 
-app = FastAPI(title="AegisHome", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="AegisHome", version="0.3.0", lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
@@ -158,20 +152,17 @@ def _should_respond(text: str, event: dict, msg: dict) -> tuple[bool, str]:
     if not _is_group_source(event):
         return True, text
 
-    # Check LINE's native @mention — bot appears in mentionees list
+    # Check LINE's native @mention
     if _bot_user_id:
         mentionees = msg.get("mention", {}).get("mentionees", [])
-        if any(m.get("userId") == _bot_user_id for m in mentionees):
-            # Strip the @mention text from the message so the LLM only sees the real content
-            mention_text = next(
-                (m for m in mentionees if m.get("userId") == _bot_user_id), {}
-            )
-            idx = mention_text.get("index", 0)
-            length = mention_text.get("length", 0)
-            cleaned = (text[:idx] + text[idx + length:]).strip()
-            return True, cleaned or text
+        for m in mentionees:
+            if m.get("userId") == _bot_user_id:
+                idx = m.get("index", 0)
+                length = m.get("length", 0)
+                cleaned = (text[:idx] + text[idx + length:]).strip()
+                return True, cleaned or text
 
-    # Fallback: plain text prefix match (DMs or trigger-word style)
+    # Fallback: trigger-word prefix
     if not BOT_TRIGGER:
         return True, text
 
@@ -182,59 +173,6 @@ def _should_respond(text: str, event: dict, msg: dict) -> tuple[bool, str]:
             return True, text[len(prefix):].strip()
 
     return False, text
-
-
-async def _schedule_reminder(chat_id: str, reminder: dict) -> None:
-    try:
-        run_dt = datetime.fromisoformat(reminder["datetime"])
-        if run_dt.tzinfo is None:
-            run_dt = TAIWAN_TZ.localize(run_dt)
-
-        if run_dt <= datetime.now(TAIWAN_TZ):
-            logger.warning("Reminder time %s is in the past, skipping", run_dt)
-            return
-
-        message = reminder.get("message", "時間到囉！")
-
-        async def _push():
-            await push_message(chat_id, message)
-
-        scheduler.add_job(
-            _push,
-            trigger="date",
-            run_date=run_dt,
-            id=f"{chat_id}_{run_dt.isoformat()}",
-            replace_existing=True,
-        )
-        logger.info("Reminder scheduled for %s → %s", run_dt, chat_id)
-    except Exception:
-        logger.exception("Failed to schedule reminder")
-
-
-async def _handle_cal_add(text: str) -> str:
-    """Parse event title + datetime from natural language and add to Apple Calendar."""
-    try:
-        client = factory.get_client()
-        reminder = await parse_reminder(text, client)
-        if reminder and reminder.get("datetime"):
-            from datetime import datetime as dt
-            run_dt = dt.fromisoformat(reminder["datetime"])
-            title = reminder.get("message", text)
-            return await cal_add_event(title, run_dt)
-        return "小恆恆看不懂要加什麼行程... 可以說清楚一點嗎？例如：「加行程 看牙醫 明天下午3點」"
-    except Exception:
-        logger.exception("_handle_cal_add error")
-        return "新增行程時出了點問題，可以再試一次嗎？"
-
-
-async def _try_schedule(text: str, chat_id: str) -> None:
-    try:
-        client = factory.get_client()
-        reminder = await parse_reminder(text, client)
-        if reminder:
-            await _schedule_reminder(chat_id, reminder)
-    except Exception:
-        logger.exception("_try_schedule error")
 
 
 async def _send_morning_summary() -> None:
@@ -255,15 +193,13 @@ async def _send_morning_summary() -> None:
 # ---------------------------------------------------------------------------
 @app.get("/health")
 async def health() -> JSONResponse:
-    jobs = [
-        {"id": j.id, "next_run": str(j.next_run_time)}
-        for j in scheduler.get_jobs()
-    ]
+    jobs = [{"id": j.id, "next_run": str(j.next_run_time)} for j in scheduler.get_jobs()]
     return JSONResponse({
         "status": "ok",
         "active_model": factory.active_model,
         "trigger": BOT_TRIGGER or "(all messages)",
         "redis": bool(_redis_client),
+        "bot_user_id": _bot_user_id or "(unknown)",
         "pending_reminders": len(jobs),
         "reminders": jobs,
     })
@@ -301,19 +237,17 @@ async def webhook(request: Request) -> Response:
         if _redis_client:
             asyncio.ensure_future(register_chat(_redis_client, chat_id))
 
-        # ── Image message ──────────────────────────────────────────────────
+        # ── Image ──────────────────────────────────────────────────────────
         if msg_type == "image":
-            reply_text = await analyze_image(msg["id"])
-            await reply_message(reply_token, reply_text)
+            await reply_message(reply_token, await analyze_image(msg["id"]))
             continue
 
-        # ── Audio / voice message ──────────────────────────────────────────
+        # ── Voice ──────────────────────────────────────────────────────────
         if msg_type == "audio":
-            reply_text = await handle_voice(msg["id"])
-            await reply_message(reply_token, reply_text)
+            await reply_message(reply_token, await handle_voice(msg["id"]))
             continue
 
-        # ── Text message ───────────────────────────────────────────────────
+        # ── Text ───────────────────────────────────────────────────────────
         if msg_type != "text":
             continue
 
@@ -322,7 +256,7 @@ async def webhook(request: Request) -> Response:
         if not should_respond:
             continue
 
-        # Hard commands
+        # Hard commands (no LLM needed)
         if text.lower() == "/reset":
             await memory.clear_history(chat_id)
             await reply_message(reply_token, "對話記憶清除囉！小恆恆忘記之前說的了 (ﾉ>ω<)ﾉ")
@@ -345,78 +279,36 @@ async def webhook(request: Request) -> Response:
                 await reply_message(reply_token, str(e))
             continue
 
-        # ── Structured feature intents (no LLM needed) ────────────────────
-        reply_text: str | None = None
-
-        # Shopping list
-        shop_intent, shop_payload = parse_shopping_intent(text)
-        if shop_intent != "none":
-            if not shopping:
-                reply_text = _NO_REDIS_MSG
-            elif shop_intent == "show":
-                reply_text = await shopping.show_list(chat_id)
-            elif shop_intent == "add":
-                reply_text = await shopping.add_item(chat_id, shop_payload)
-            elif shop_intent == "remove":
-                reply_text = await shopping.remove_item(chat_id, shop_payload)
-            elif shop_intent == "clear":
-                reply_text = await shopping.clear_list(chat_id)
-
-        # Expense tracking
-        if reply_text is None:
-            exp_intent, amount, description = parse_expense_intent(text)
-            if exp_intent != "none":
-                if not expense:
-                    reply_text = _NO_REDIS_MSG
-                elif exp_intent == "summary":
-                    reply_text = await expense.monthly_summary(chat_id)
-                elif exp_intent == "add":
-                    who = "家人"
-                    if user_id:
-                        try:
-                            who = await get_user_display_name(user_id, group_id)
-                        except Exception:
-                            pass
-                    reply_text = await expense.add_expense(chat_id, amount, description, who)
-
-        # Apple Calendar
-        if reply_text is None:
-            cal_intent, extra, cal_raw = parse_calendar_intent(text)
-            if cal_intent == "show":
-                reply_text = await cal_get_events(extra)
-            elif cal_intent == "week":
-                reply_text = await cal_get_week_events(extra)
-            elif cal_intent == "add":
-                reply_text = await _handle_cal_add(cal_raw)
-
-        # ── LLM fallback ──────────────────────────────────────────────────
-        if reply_text is None:
-            history = await memory.get_history(chat_id)
-
-            # Prepend speaker name for group chats so the LLM knows who said what
-            contexted_text = text
-            if _is_group_source(event) and user_id:
-                try:
-                    display_name = await get_user_display_name(user_id, group_id)
-                    contexted_text = f"[{display_name}說] {text}"
-                except Exception:
-                    pass
-
+        # ── LLM + Tool Calling ─────────────────────────────────────────────
+        # Resolve speaker name for expense attribution and context
+        who = "家人"
+        if user_id:
             try:
-                client = factory.get_client()
-                reply_text = await client.generate_response(
-                    contexted_text, history, system_prompt=SYSTEM_PROMPT
-                )
-            except Exception as exc:
-                logger.exception("LLM error for chat %s", chat_id)
-                reply_text = f"抱歉，發生了一點問題：{exc}"
+                who = await get_user_display_name(user_id, group_id)
+            except Exception:
+                pass
 
-            await memory.save_message(chat_id, "user", text)
-            await memory.save_message(chat_id, "assistant", reply_text)
+        # Prepend speaker tag in group chats so the LLM knows who's talking
+        contexted_text = f"[{who}說] {text}" if _is_group_source(event) and who != "家人" else text
 
-            # Background: check for reminder intent
-            asyncio.ensure_future(_try_schedule(text, chat_id))
+        ctx = ToolContext(chat_id=chat_id, who=who, shopping=shopping, expense=expense)
+        history = await memory.get_history(chat_id)
+        client = factory.get_client()
 
+        try:
+            reply_text = await client.generate_with_tools(
+                user_message=contexted_text,
+                history=history,
+                system_prompt=SYSTEM_PROMPT,
+                tool_declarations=DECLARATIONS,
+                tool_executor=lambda name, args: execute_tool(name, args, ctx),
+            )
+        except Exception as exc:
+            logger.exception("LLM error for chat %s", chat_id)
+            reply_text = f"抱歉，發生了一點問題：{exc}"
+
+        await memory.save_message(chat_id, "user", text)
+        await memory.save_message(chat_id, "assistant", reply_text)
         await reply_message(reply_token, reply_text)
 
     return Response(status_code=200)
