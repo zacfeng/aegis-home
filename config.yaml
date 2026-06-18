@@ -3,9 +3,13 @@ model:
   provider: "openrouter"
 
 gateway:
+  allow_all_users: true
   platforms:
     line:
       enabled: true
+      trigger_words:
+        - "小恆恆"
+        - "橫隔膜"
 
 display:
   tool_progress: all
@@ -21,7 +25,7 @@ memory:
 
 agent:
   max_turns: 20
-  # 關閉不需要的工具集（家庭助理不需要 terminal / 瀏覽器）
+  # 關閉不需要的工具集（家庭助理不需要 terminal）
   disabled_toolsets:
     - terminal
     - files
