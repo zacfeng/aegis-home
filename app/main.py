@@ -87,7 +87,7 @@ def _should_respond(text: str, event: dict) -> tuple[bool, str]:
     """
     Returns (should_respond, cleaned_message).
     - 1:1 chat: always respond, return text as-is.
-    - Group/room: only respond if BOT_TRIGGER prefix found, strip it from message.
+    - Group/room: respond if message starts with BOT_TRIGGER or @BOT_TRIGGER.
     """
     if not _is_group_source(event):
         return True, text
@@ -97,9 +97,11 @@ def _should_respond(text: str, event: dict) -> tuple[bool, str]:
 
     lower = text.lower()
     trigger_lower = BOT_TRIGGER.lower()
-    if lower.startswith(trigger_lower):
-        cleaned = text[len(BOT_TRIGGER):].strip()
-        return True, cleaned
+
+    for prefix in (trigger_lower, "@" + trigger_lower):
+        if lower.startswith(prefix):
+            cleaned = text[len(prefix):].strip()
+            return True, cleaned
 
     return False, text
 
