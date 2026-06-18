@@ -1,5 +1,6 @@
 #!/bin/sh
 set -e
+export PYTHONUNBUFFERED=1
 
 SEED_DIR="/opt/hermes-seed"
 DATA_DIR="${HERMES_HOME:-/opt/hermes-data}"
