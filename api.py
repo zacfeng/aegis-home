@@ -53,6 +53,11 @@ async def handle_shortcut(payload: ShortcutPayload, x_api_key: str = Header(None
         raise HTTPException(status_code=500, detail=str(e))
 
 # 2. 將其他所有請求（包含 LINE Webhook）轉發給背景的 Hermes Gateway
+import logging
+import sys
+logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+logger = logging.getLogger("proxy")
+
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"])
 async def proxy_to_gateway(request: Request, path: str):
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -63,6 +68,11 @@ async def proxy_to_gateway(request: Request, path: str):
         
         # 讀取原本的 body
         body = await request.body()
+        
+        # Debug: 印出收到的請求
+        logger.info(f"[PROXY] >>> {request.method} /{path}")
+        if "line" in path.lower():
+            logger.info(f"[PROXY] >>> Body: {body[:500]}")
         
         try:
             # 呼叫背景的 Hermes Gateway
@@ -75,6 +85,10 @@ async def proxy_to_gateway(request: Request, path: str):
             )
             proxy_resp = await client.send(proxy_req)
             
+            # Debug: 印出 Gateway 的回應
+            logger.info(f"[PROXY] <<< Gateway responded: {proxy_resp.status_code}")
+            logger.info(f"[PROXY] <<< Body: {proxy_resp.content[:500]}")
+            
             # 將結果原封不動回傳給 LINE
             return Response(
                 content=proxy_resp.content,
@@ -82,6 +96,7 @@ async def proxy_to_gateway(request: Request, path: str):
                 headers=dict(proxy_resp.headers)
             )
         except httpx.RequestError as e:
+            logger.error(f"[PROXY] !!! Gateway proxy error: {str(e)}")
             raise HTTPException(status_code=502, detail=f"Gateway proxy error: {str(e)}")
 
 if __name__ == "__main__":
