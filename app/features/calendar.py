@@ -3,7 +3,6 @@ import logging
 import os
 import re
 from datetime import datetime, timedelta
-from typing import Optional
 
 import pytz
 
@@ -16,6 +15,33 @@ def _get_credentials() -> tuple[str, str]:
     return os.getenv("APPLE_ID", ""), os.getenv("APPLE_APP_PASSWORD", "")
 
 
+def _target_calendar_name() -> str:
+    return os.getenv("APPLE_CALENDAR_NAME", "Family")
+
+
+def _pick_calendar(calendars: list) -> object | None:
+    """Return the calendar matching APPLE_CALENDAR_NAME (case-insensitive), or None."""
+    target = _target_calendar_name().lower()
+    for cal in calendars:
+        try:
+            name = (cal.name or "").lower()
+        except Exception:
+            name = ""
+        if name == target:
+            return cal
+    # Log available names so the user can diagnose a mismatch
+    names = []
+    for cal in calendars:
+        try:
+            names.append(cal.name)
+        except Exception:
+            names.append("(unknown)")
+    logger.warning(
+        "Calendar '%s' not found. Available: %s", _target_calendar_name(), names
+    )
+    return None
+
+
 def _sync_get_events(days_ahead: int) -> str:
     try:
         import caldav  # type: ignore
@@ -26,7 +52,13 @@ def _sync_get_events(days_ahead: int) -> str:
 
         client = caldav.DAVClient(url=_ICAL_URL, username=username, password=password)
         principal = client.principal()
-        calendars = principal.calendars()
+        cal = _pick_calendar(principal.calendars())
+
+        if cal is None:
+            return (
+                f"找不到「{_target_calendar_name()}」行事曆... "
+                "請確認 APPLE_CALENDAR_NAME 設定正確，或改成你的行事曆名稱喔！"
+            )
 
         now = datetime.now(TAIWAN_TZ)
         target = now + timedelta(days=days_ahead)
@@ -41,22 +73,18 @@ def _sync_get_events(days_ahead: int) -> str:
             day_label = target.strftime("%-m月%-d日")
 
         events: list[tuple[str, str]] = []
-        for cal in calendars:
-            try:
-                results = cal.date_search(start=start, end=end, expand=True)
-                for event in results:
-                    vevent = event.vobject_instance.vevent
-                    summary = str(vevent.summary.value) if hasattr(vevent, "summary") else "未命名"
-                    dtstart = vevent.dtstart.value
-                    if isinstance(dtstart, datetime):
-                        if dtstart.tzinfo:
-                            dtstart = dtstart.astimezone(TAIWAN_TZ)
-                        time_str = dtstart.strftime("%H:%M")
-                    else:
-                        time_str = "全天"
-                    events.append((time_str, summary))
-            except Exception:
-                logger.exception("Error reading calendar")
+        results = cal.date_search(start=start, end=end, expand=True)
+        for event in results:
+            vevent = event.vobject_instance.vevent
+            summary = str(vevent.summary.value) if hasattr(vevent, "summary") else "未命名"
+            dtstart = vevent.dtstart.value
+            if isinstance(dtstart, datetime):
+                if dtstart.tzinfo:
+                    dtstart = dtstart.astimezone(TAIWAN_TZ)
+                time_str = dtstart.strftime("%H:%M")
+            else:
+                time_str = "全天"
+            events.append((time_str, summary))
 
         if not events:
             return f"📅 {day_label}沒有行程喔！可以好好放鬆～"
@@ -82,9 +110,13 @@ def _sync_add_event(title: str, dt: datetime, duration_minutes: int = 60) -> str
 
         client = caldav.DAVClient(url=_ICAL_URL, username=username, password=password)
         principal = client.principal()
-        calendars = principal.calendars()
-        if not calendars:
-            return "找不到任何行事曆..."
+        cal = _pick_calendar(principal.calendars())
+
+        if cal is None:
+            return (
+                f"找不到「{_target_calendar_name()}」行事曆... "
+                "請確認 APPLE_CALENDAR_NAME 設定正確喔！"
+            )
 
         dt_local = dt if dt.tzinfo else TAIWAN_TZ.localize(dt)
         dt_utc = dt_local.astimezone(pytz.utc)
@@ -102,9 +134,9 @@ def _sync_add_event(title: str, dt: datetime, duration_minutes: int = 60) -> str
             "END:VCALENDAR\r\n"
         )
 
-        calendars[0].add_event(ical)
+        cal.add_event(ical)
         return (
-            f"📅 好的！小恆恆幫你把「{title}」加到行事曆了～\n"
+            f"📅 好的！小恆恆幫你把「{title}」加到{_target_calendar_name()}行事曆了～\n"
             f"時間：{dt_local.strftime('%m/%d（%A）%H:%M')}"
         )
 
