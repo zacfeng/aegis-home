@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import re
+import uuid
 from datetime import datetime, timedelta
 
 import pytz
@@ -187,6 +188,7 @@ def _sync_add_event(title: str, dt: datetime, duration_minutes: int = 60) -> str
             "VERSION:2.0\r\n"
             "PRODID:-//AegisHome//橫隔膜//EN\r\n"
             "BEGIN:VEVENT\r\n"
+            f"UID:{uuid.uuid4()}@aegishome\r\n"
             f"SUMMARY:{title}\r\n"
             f"DTSTART:{dt_utc.strftime('%Y%m%dT%H%M%SZ')}\r\n"
             f"DTEND:{dtend_utc.strftime('%Y%m%dT%H%M%SZ')}\r\n"

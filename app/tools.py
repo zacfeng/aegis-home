@@ -47,14 +47,22 @@ DECLARATIONS = [
     },
     {
         "name": "add_calendar_event",
-        "description": "新增行程到 Apple 家人行事曆",
+        "description": (
+            "新增行程到 Apple 家人行事曆。"
+            "只要使用者說要加行程、排行程、新增行事曆，就必須呼叫此工具，"
+            "絕對不可以自行回覆「已新增」或「成功」——必須等工具回傳結果才能回覆。"
+            "若使用者未指定時間，預設台灣時間 09:00。"
+        ),
         "parameters": {
             "type": "object",
             "properties": {
                 "title": {"type": "string", "description": "行程名稱"},
                 "datetime_iso": {
                     "type": "string",
-                    "description": "台灣時間 ISO 8601，例如 2026-06-25T14:00:00+08:00",
+                    "description": (
+                        "台灣時間 ISO 8601，例如 2026-06-25T14:00:00+08:00。"
+                        "若使用者只說日期未說時間，預設 09:00 台灣時間。"
+                    ),
                 },
                 "duration_minutes": {
                     "type": "integer",
