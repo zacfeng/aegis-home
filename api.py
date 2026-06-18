@@ -55,7 +55,7 @@ async def handle_shortcut(payload: ShortcutPayload, x_api_key: str = Header(None
 # 2. 將其他所有請求（包含 LINE Webhook）轉發給背景的 Hermes Gateway
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"])
 async def proxy_to_gateway(request: Request, path: str):
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=30.0) as client:
         # 準備轉發的網址與標頭
         url = f"{GATEWAY_URL}/{path}"
         headers = dict(request.headers)
