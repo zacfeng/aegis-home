@@ -135,33 +135,6 @@ REMOVE_CHORE = {
 }
 
 # ---------------------------------------------------------------------------
-# Family Memo
-# ---------------------------------------------------------------------------
-LEAVE_MESSAGE = {
-    "name": "leave_message",
-    "description": "留言給家人",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "message": {"type": "string", "description": "留言內容"}
-        },
-        "required": ["message"]
-    }
-}
-
-GET_MESSAGES = {
-    "name": "get_messages",
-    "description": "讀取目前的家庭留言板",
-    "parameters": {"type": "object", "properties": {}},
-}
-
-CLEAR_MESSAGES = {
-    "name": "clear_messages",
-    "description": "清空留言板",
-    "parameters": {"type": "object", "properties": {}},
-}
-
-# ---------------------------------------------------------------------------
 # Inventory
 # ---------------------------------------------------------------------------
 GET_INVENTORY = {
@@ -204,19 +177,4 @@ GET_CARE_STATUS = {
     "parameters": {"type": "object", "properties": {}},
 }
 
-# ---------------------------------------------------------------------------
-# Weather
-# ---------------------------------------------------------------------------
-GET_WEATHER = {
-    "name": "get_weather",
-    "description": "查詢目前天氣（使用 OpenWeather API）",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "city": {
-                "type": "string",
-                "description": "城市名稱（英文，例如 Taipei, Taichung），預設為 Taipei"
-            }
-        }
-    }
-}
+

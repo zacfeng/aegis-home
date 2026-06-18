@@ -12,14 +12,10 @@ _TOOLS = [
     ("get_chores",           schemas.GET_CHORES,           tools.get_chores),
     ("add_chore",            schemas.ADD_CHORE,            tools.add_chore),
     ("remove_chore",         schemas.REMOVE_CHORE,         tools.remove_chore),
-    ("leave_message",        schemas.LEAVE_MESSAGE,        tools.leave_message),
-    ("get_messages",         schemas.GET_MESSAGES,         tools.get_messages),
-    ("clear_messages",       schemas.CLEAR_MESSAGES,       tools.clear_messages),
     ("get_inventory",        schemas.GET_INVENTORY,        tools.get_inventory),
     ("update_inventory",     schemas.UPDATE_INVENTORY,     tools.update_inventory),
     ("log_care_activity",    schemas.LOG_CARE_ACTIVITY,    tools.log_care_activity),
     ("get_care_status",      schemas.GET_CARE_STATUS,      tools.get_care_status),
-    ("get_weather",          schemas.GET_WEATHER,          tools.get_weather),
 ]
 
 

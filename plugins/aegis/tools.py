@@ -311,43 +311,7 @@ def remove_chore(args: dict, **kw) -> str:
         return _err(str(exc))
 
 
-# ---------------------------------------------------------------------------
-# Family Memo
-# ---------------------------------------------------------------------------
-def leave_message(args: dict, **kw) -> str:
-    r = _redis()
-    if not r:
-        return _err("需要設定 REDIS_URL 才能使用留言板")
-    try:
-        msg = args["message"]
-        now_str = datetime.now(TAIWAN_TZ).strftime("%m/%d %H:%M")
-        entry = f"[{now_str}] {msg}"
-        r.rpush(_MEMOS_KEY, entry)
-        return _ok({"message_left": entry})
-    except Exception as exc:
-        return _err(str(exc))
 
-
-def get_messages(args: dict, **kw) -> str:
-    r = _redis()
-    if not r:
-        return _err("需要設定 REDIS_URL 才能使用留言板")
-    try:
-        msgs = list(r.lrange(_MEMOS_KEY, 0, -1))
-        return _ok({"messages": msgs})
-    except Exception as exc:
-        return _err(str(exc))
-
-
-def clear_messages(args: dict, **kw) -> str:
-    r = _redis()
-    if not r:
-        return _err("需要設定 REDIS_URL 才能使用留言板")
-    try:
-        r.delete(_MEMOS_KEY)
-        return _ok({"cleared": True})
-    except Exception as exc:
-        return _err(str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -408,39 +372,4 @@ def get_care_status(args: dict, **kw) -> str:
         return _err(str(exc))
 
 
-# ---------------------------------------------------------------------------
-# Weather
-# ---------------------------------------------------------------------------
-def get_weather(args: dict, **kw) -> str:
-    import urllib.request
-    import urllib.parse
-    
-    city = args.get("city", "Taipei")
-    api_key = os.getenv("OPENWEATHER_API_KEY", "")
-    if not api_key:
-        return _err("請先設定 OPENWEATHER_API_KEY 環境變數")
-    
-    try:
-        url = (
-            f"https://api.openweathermap.org/data/2.5/weather"
-            f"?q={urllib.parse.quote(city)}&appid={api_key}&units=metric&lang=zh_tw"
-        )
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            if resp.status == 200:
-                data = json.loads(resp.read().decode('utf-8'))
-                desc = data["weather"][0]["description"]
-                temp = data["main"]["temp"]
-                feels = data["main"]["feels_like"]
-                humidity = data["main"]["humidity"]
-                return _ok({
-                    "city": city,
-                    "description": desc,
-                    "temperature_c": temp,
-                    "feels_like_c": feels,
-                    "humidity": humidity
-                })
-            else:
-                return _err(f"Weather API returned status: {resp.status}")
-    except Exception as exc:
-        return _err(f"查詢天氣失敗: {exc}")
+
