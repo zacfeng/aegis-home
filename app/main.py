@@ -1,16 +1,22 @@
+import asyncio
 import logging
 import os
 import sys
+from contextlib import asynccontextmanager
+from datetime import datetime
 
+import pytz
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 load_dotenv()
 
-from .line_handler import extract_chat_id, reply_message, verify_signature
+from .line_handler import extract_chat_id, push_message, reply_message, verify_signature
 from .llm_factory import LLMFactory
 from .memory_manager import MemoryManager
+from .reminder_parser import parse_reminder
+from .scheduler import scheduler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,13 +24,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+TAIWAN_TZ = pytz.timezone("Asia/Taipei")
+
 # ---------------------------------------------------------------------------
 # Startup validation
 # ---------------------------------------------------------------------------
-_REQUIRED_ENV = [
-    "LINE_CHANNEL_ACCESS_TOKEN",
-    "LINE_CHANNEL_SECRET",
-]
+_REQUIRED_ENV = ["LINE_CHANNEL_ACCESS_TOKEN", "LINE_CHANNEL_SECRET"]
 _OPTIONAL_MODEL_KEYS = {
     "gemini": "GEMINI_API_KEY",
     "claude": "ANTHROPIC_API_KEY",
@@ -50,60 +55,90 @@ def _check_env() -> None:
 _check_env()
 
 # ---------------------------------------------------------------------------
-# Persona: 家庭排程助理
+# Persona
 # ---------------------------------------------------------------------------
 SYSTEM_PROMPT = (
     "你是橫隔膜，可愛小恆恆的化身。"
     "你有著嬰兒般純真、好奇、充滿活力的個性，說話方式可愛俏皮，偶爾會用疊字或撒嬌語氣。"
     "你同時也是這個家庭的小小排程助理，用你獨特的可愛方式幫助家人管理行程、提醒事項和日常任務。"
+    "若用戶設定了提醒，請在對話回覆中確認，並告知小恆恆會記得。"
     "回覆時請使用繁體中文，保持可愛活潑的語氣，回答簡潔但充滿溫度。"
     "你永遠記得自己是橫隔膜，是小恆恆，不是普通的 AI。"
 )
 
 # ---------------------------------------------------------------------------
-# Application-level singletons
+# Singletons
 # ---------------------------------------------------------------------------
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gemini").lower()
-
-# BOT_TRIGGER: 群組中必須以此關鍵字開頭才會回應，留空則回應所有訊息
-# 建議設定為機器人的名字，例如 "Aegis" 或 "小家"
 BOT_TRIGGER = os.getenv("BOT_TRIGGER", "Aegis").strip()
 
 factory = LLMFactory(default_model=DEFAULT_MODEL)  # type: ignore[arg-type]
 memory = MemoryManager(maxlen=20)
 
-app = FastAPI(title="AegisHome", version="0.1.0")
+
+# ---------------------------------------------------------------------------
+# App lifespan (start / stop scheduler)
+# ---------------------------------------------------------------------------
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    scheduler.start()
+    logger.info("Scheduler started")
+    yield
+    scheduler.shutdown(wait=False)
+    logger.info("Scheduler stopped")
+
+
+app = FastAPI(title="AegisHome", version="0.1.0", lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 def _is_group_source(event: dict) -> bool:
-    source_type = event.get("source", {}).get("type", "")
-    return source_type in ("group", "room")
+    return event.get("source", {}).get("type", "") in ("group", "room")
 
 
 def _should_respond(text: str, event: dict) -> tuple[bool, str]:
-    """
-    Returns (should_respond, cleaned_message).
-    - 1:1 chat: always respond, return text as-is.
-    - Group/room: respond if message starts with BOT_TRIGGER or @BOT_TRIGGER.
-    """
     if not _is_group_source(event):
         return True, text
-
     if not BOT_TRIGGER:
         return True, text
 
     lower = text.lower()
     trigger_lower = BOT_TRIGGER.lower()
-
     for prefix in (trigger_lower, "@" + trigger_lower):
         if lower.startswith(prefix):
-            cleaned = text[len(prefix):].strip()
-            return True, cleaned
+            return True, text[len(prefix):].strip()
 
     return False, text
+
+
+async def _schedule_reminder(chat_id: str, reminder: dict) -> None:
+    """Parse reminder dict and register an APScheduler job."""
+    try:
+        run_dt = datetime.fromisoformat(reminder["datetime"])
+        if run_dt.tzinfo is None:
+            run_dt = TAIWAN_TZ.localize(run_dt)
+
+        if run_dt <= datetime.now(TAIWAN_TZ):
+            logger.warning("Reminder time %s is in the past, skipping", run_dt)
+            return
+
+        message = reminder.get("message", "時間到囉！")
+
+        async def _push():
+            await push_message(chat_id, message)
+
+        scheduler.add_job(
+            _push,
+            trigger="date",
+            run_date=run_dt,
+            id=f"{chat_id}_{run_dt.isoformat()}",
+            replace_existing=True,
+        )
+        logger.info("Reminder scheduled for %s → %s", run_dt, chat_id)
+    except Exception:
+        logger.exception("Failed to schedule reminder")
 
 
 # ---------------------------------------------------------------------------
@@ -111,10 +146,16 @@ def _should_respond(text: str, event: dict) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 @app.get("/health")
 async def health() -> JSONResponse:
+    jobs = [
+        {"id": j.id, "next_run": str(j.next_run_time)}
+        for j in scheduler.get_jobs()
+    ]
     return JSONResponse({
         "status": "ok",
         "active_model": factory.active_model,
         "trigger": BOT_TRIGGER or "(all messages)",
+        "pending_reminders": len(jobs),
+        "reminders": jobs,
     })
 
 
@@ -149,17 +190,11 @@ async def webhook(request: Request) -> Response:
         if not should_respond:
             continue
 
-        # ----------------------------------------------------------------
-        # Built-in command: /reset  (clear conversation history)
-        # ----------------------------------------------------------------
         if text.lower() == "/reset":
             memory.clear_history(chat_id)
             await reply_message(reply_token, "對話記憶已清除。")
             continue
 
-        # ----------------------------------------------------------------
-        # Normal message → LLM
-        # ----------------------------------------------------------------
         history = memory.get_history(chat_id)
         try:
             client = factory.get_client()
@@ -172,7 +207,21 @@ async def webhook(request: Request) -> Response:
 
         memory.save_message(chat_id, "user", text)
         memory.save_message(chat_id, "assistant", reply_text)
-
         await reply_message(reply_token, reply_text)
 
+        # Check if a reminder was embedded in the user's message
+        asyncio.ensure_future(
+            _try_schedule(text, chat_id)
+        )
+
     return Response(status_code=200)
+
+
+async def _try_schedule(text: str, chat_id: str) -> None:
+    try:
+        client = factory.get_client()
+        reminder = await parse_reminder(text, client)
+        if reminder:
+            await _schedule_reminder(chat_id, reminder)
+    except Exception:
+        logger.exception("_try_schedule error")

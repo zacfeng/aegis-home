@@ -52,6 +52,30 @@ async def reply_message(reply_token: str, text: str) -> None:
             )
 
 
+async def push_message(to: str, text: str) -> None:
+    """Proactively push a message to a user or group (no reply token needed)."""
+    token = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}",
+    }
+    payload = {
+        "to": to,
+        "messages": [{"type": "text", "text": text}],
+    }
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{LINE_API_BASE}/message/push",
+            json=payload,
+            headers=headers,
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            logger.error(
+                "LINE push failed: %s %s", resp.status_code, resp.text
+            )
+
+
 def extract_chat_id(event: dict[str, Any]) -> str:
     """
     Derive a stable chat identifier:
