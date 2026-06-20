@@ -1,4 +1,17 @@
 import os
+import sys
+print(f"[DEBUG] CWD: {os.getcwd()}", flush=True)
+print(f"[DEBUG] sys.path: {sys.path}", flush=True)
+if os.path.exists("/opt/hermes-data"):
+    print(f"[DEBUG] /opt/hermes-data contents: {os.listdir('/opt/hermes-data')}", flush=True)
+    if os.path.exists("/opt/hermes-data/cron"):
+        print(f"[DEBUG] /opt/hermes-data/cron contents: {os.listdir('/opt/hermes-data/cron')}", flush=True)
+try:
+    import cron.scheduler_provider
+    print("[DEBUG] Import cron.scheduler_provider: SUCCESS", flush=True)
+except Exception as e:
+    print(f"[DEBUG] Import cron.scheduler_provider: FAILED: {e}", flush=True)
+
 import httpx
 from fastapi import FastAPI, HTTPException, Header, Request, Response
 from pydantic import BaseModel
