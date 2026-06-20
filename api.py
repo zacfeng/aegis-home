@@ -1,3 +1,4 @@
+import os
 import httpx
 from fastapi import FastAPI, HTTPException, Header, Request, Response
 from pydantic import BaseModel
