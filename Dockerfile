@@ -12,13 +12,9 @@ RUN pip install --no-cache-dir \
     pytz==2024.1 \
     httpx
 
-# Apply the Gemini native client mock streaming patch
-COPY patch_adapter.py /tmp/patch_adapter.py
-RUN python /tmp/patch_adapter.py && rm /tmp/patch_adapter.py
-
-# Apply the gateway scheduler module import debug patch
-COPY patch_gateway.py /tmp/patch_gateway.py
-RUN python /tmp/patch_gateway.py && rm /tmp/patch_gateway.py
+# Install runtime patches via sitecustomize.py (runs at every Python startup)
+COPY sitecustomize.py /tmp/sitecustomize.py
+RUN python -c "import site, shutil; shutil.copy('/tmp/sitecustomize.py', site.getsitepackages()[0] + '/sitecustomize.py')"
 
 # Seed config — copied to HERMES_HOME on every container start
 COPY SOUL.md     /opt/hermes-seed/SOUL.md
