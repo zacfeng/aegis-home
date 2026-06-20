@@ -1,7 +1,8 @@
 import os
 import sys
+import gateway
 
-filepath = "/usr/local/lib/python3.11/site-packages/gateway/run.py"
+filepath = os.path.join(os.path.dirname(gateway.__file__), "run.py")
 
 if not os.path.exists(filepath):
     print(f"ERROR: {filepath} not found.")
@@ -12,16 +13,14 @@ with open(filepath, "r") as f:
 
 target = "    from cron.scheduler_provider import resolve_cron_scheduler"
 
-replacement = """    print("[GATEWAY-DEBUG] CWD:", os.getcwd(), flush=True)
-    print("[GATEWAY-DEBUG] sys.path:", sys.path, flush=True)
-    import traceback
+replacement = """    # TEMPORARY WORKAROUND: Remove plugins directory from sys.path to prevent plugins/cron from shadowing core cron package
+    import sys
+    _orig_path = list(sys.path)
+    sys.path = [p for p in sys.path if not p.endswith('/plugins') and not p.endswith('\\\\plugins')]
     try:
         from cron.scheduler_provider import resolve_cron_scheduler
-        print("[GATEWAY-DEBUG] Import cron.scheduler_provider: SUCCESS", flush=True)
-    except Exception as e:
-        print("[GATEWAY-DEBUG] Import cron.scheduler_provider: FAILED:", e, flush=True)
-        traceback.print_exc()
-        raise"""
+    finally:
+        sys.path = _orig_path"""
 
 if target in content:
     content = content.replace(target, replacement)
@@ -29,5 +28,4 @@ if target in content:
         f.write(content)
     print("SUCCESS: gateway/run.py patched successfully!")
 else:
-    # Try finding it with different indentation or look for it generally
     print("WARNING: Target code not found in gateway/run.py.")

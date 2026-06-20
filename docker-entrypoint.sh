@@ -16,9 +16,6 @@ cp "$SEED_DIR/api.py" "$DATA_DIR/api.py"
 # 儲存 Railway 給的真實 PORT
 REAL_PORT="${PORT:-8000}"
 
-# 關鍵：將 agent 套件路徑加入 PYTHONPATH，以解決 hermes-agent 套件將 cron 模組包在 agent 資料夾下導致的 ModuleNotFoundError
-export PYTHONPATH="/usr/local/lib/python3.11/site-packages/agent:$PYTHONPATH"
-
 # 啟動背景的 Hermes Gateway，監聽 8646 (專收 LINE Webhook)
 export PORT=8646
 export LINE_PORT=8646

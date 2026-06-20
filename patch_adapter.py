@@ -1,6 +1,8 @@
 import re
+import os
+import agent
 
-filepath = "/usr/local/lib/python3.11/site-packages/agent/gemini_native_adapter.py"
+filepath = os.path.join(os.path.dirname(agent.__file__), "gemini_native_adapter.py")
 
 with open(filepath, "r") as f:
     content = f.read()
