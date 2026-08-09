@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir \
-    "hermes-agent[messaging]" \
+    "hermes-agent[messaging]>=0.19.0" \
     caldav==1.3.9 \
     redis==5.0.8 \
     pytz==2024.1 \
